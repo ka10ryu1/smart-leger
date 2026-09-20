@@ -3,6 +3,7 @@
 - ファイル SHA-256 を imports.file_hash と照合し、同一ファイルなら取込済みと判定
 - 明細単位は row_key（利用日・正規化加盟店・金額・同ファイル内の出現回数）を同じカード名の明細どうしで照合
 - プレビュー結果は staging/<token>.json に一時保存し、「取り込む」で確定
+- 取り消し（undo_import）は import_id 単位で明細・内訳・履歴を削除する（加盟店ルールは残す）
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..constants import SOURCE_ERROR, SOURCE_RULE
+from ..constants import SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
 from ..models import ImportRecord, LedgerData, Transaction, new_id, now_iso
 from .classifier import ClassificationPipeline
 from .csv_parser import parse_statement_bytes
@@ -285,3 +286,74 @@ class Importer:
             rule_matched=counts['rules'],
             months=sorted(months),
         )
+
+
+# ------------------------------------------------------------------- undo
+class ImportNotFoundError(ValueError):
+    """指定した import_id の取込履歴が無い"""
+
+
+@dataclass
+class ImportUndoSummary:
+    """取り消しで消える内容の件数（確認ダイアログと結果表示に使う）"""
+
+    import_id: str
+    filename: str
+    transactions: int
+    manual_edits: int  # カテゴリを手動変更した、またはメモを書いた明細
+    allocations: int
+
+
+def summarize_import(data: LedgerData, import_id: str) -> ImportUndoSummary | None:
+    """取込に属する明細・手動修正・内訳の件数を数える
+
+    Args:
+        data: 全データ
+        import_id: 取込 ID
+
+    Returns:
+        件数のまとめ（履歴が無ければ None）
+    """
+    record = next((i for i in data.imports if i.import_id == import_id), None)
+    if record is None:
+        return None
+
+    txs = [t for t in data.transactions if t.import_id == import_id]
+    tx_ids = {t.id for t in txs}
+    return ImportUndoSummary(
+        import_id=import_id,
+        filename=record.filename,
+        transactions=len(txs),
+        manual_edits=sum(1 for t in txs if t.classification_source == SOURCE_MANUAL or t.memo),
+        allocations=sum(1 for a in data.allocations if a.transaction_id in tx_ids),
+    )
+
+
+def undo_import(data: LedgerData, import_id: str) -> ImportUndoSummary:
+    """取込を取り消す（明細・内訳・履歴を削除。加盟店ルールとカテゴリは残す）
+
+    履歴が消えるためファイルハッシュの重複判定も外れ、同じ CSV を取り込み直せる
+
+    Args:
+        data: 全データ
+        import_id: 取り消す取込 ID
+
+    Returns:
+        削除した件数のまとめ
+    """
+    summary = summarize_import(data, import_id)
+    if summary is None:
+        raise ImportNotFoundError(f'取込履歴が見つかりません: {import_id}')
+
+    tx_ids = {t.id for t in data.transactions if t.import_id == import_id}
+    data.transactions = [t for t in data.transactions if t.import_id != import_id]
+    data.allocations = [a for a in data.allocations if a.transaction_id not in tx_ids]
+    data.imports = [i for i in data.imports if i.import_id != import_id]
+    logger.info(
+        'import undone: import id=%s transactions=%d allocations=%d manual edits=%d',
+        import_id,
+        summary.transactions,
+        summary.allocations,
+        summary.manual_edits,
+    )
+    return summary

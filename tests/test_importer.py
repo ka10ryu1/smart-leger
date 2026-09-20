@@ -5,10 +5,12 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
-from smart_ledger.models import ClassificationResult
+import pytest
+
+from smart_ledger.models import Allocation, ClassificationResult, MerchantRule
 from smart_ledger.services.classifier import ClassificationPipeline, NullClassifier
 from smart_ledger.services.excel_repository import ExcelRepository
-from smart_ledger.services.importer import Importer
+from smart_ledger.services.importer import Importer, ImportNotFoundError, summarize_import, undo_import
 
 
 class StubClassifier:
@@ -150,3 +152,57 @@ def test_commit_retry_reuses_classification_cache(
     importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
     importer.commit(repo.load(), preview)
     assert len(stub.calls) == first_calls * 2
+
+
+def test_undo_import_removes_only_that_import(tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes) -> None:
+    """取り消しは対象 import の明細・内訳・履歴だけを消し、他の取込・ルール・カテゴリは残す
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier(), 0.85))
+    data = repo.load()
+    first = importer.commit(data, importer.preview(data, 'a.csv', fixture_csv_bytes))
+    extra_line = '2026/09/10,アタラシイミセ,"2,000",,"2,000",１回払,,"2,000",,   ,\r\n'.encode('cp932')
+    second = importer.commit(data, importer.preview(data, 'b.csv', fixture_csv_bytes + extra_line))
+    assert second.imported == 1
+
+    # 手動修正・メモ・内訳を付けておく
+    edited = next(t for t in data.transactions if t.import_id == first.import_id)
+    edited.classification_source = 'manual'
+    edited.memo = 'メモ'
+    data.allocations.append(Allocation(edited.id, '食費', edited.amount))
+    data.merchant_rules.append(MerchantRule('サンプル', '食費'))
+
+    summary = summarize_import(data, first.import_id)
+    assert summary is not None
+    assert (summary.transactions, summary.manual_edits, summary.allocations) == (10, 1, 1)
+
+    result = undo_import(data, first.import_id)
+    assert result.transactions == 10
+    assert all(t.import_id != first.import_id for t in data.transactions)
+    assert len(data.transactions) == 1 and data.transactions[0].import_id == second.import_id
+    assert data.allocations == []
+    assert [i.import_id for i in data.imports] == [second.import_id]
+    assert len(data.merchant_rules) == 1
+    assert len(data.category_names()) == 10
+
+    # 履歴が消えたので同じ CSV を取り込み直せる。b.csv 取込時に重複としてスキップされた 10 行は
+    # a.csv 側の明細のままだったので、a.csv の取り消しで消え、再取込では全行が新規になる
+    preview = importer.preview(data, 'a.csv', fixture_csv_bytes)
+    assert preview.already_imported is False
+    assert preview.new_count == 10 and preview.duplicate_count == 0
+
+
+def test_undo_import_unknown_id_raises(repo: ExcelRepository) -> None:
+    """存在しない import_id は ImportNotFoundError
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+    """
+    data = repo.load()
+    assert summarize_import(data, 'imp_nothing') is None
+    with pytest.raises(ImportNotFoundError):
+        undo_import(data, 'imp_nothing')
