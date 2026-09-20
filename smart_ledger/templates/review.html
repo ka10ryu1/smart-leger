@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}要確認{% endblock %}
+{% block content %}
+<h1>要確認 <span class="count">{{ transactions|length }} 件</span></h1>
+<p class="hint">confidence が {{ threshold }} 未満、Jev エラー、未分類の明細です。カテゴリを選んで確定してください。「今後この加盟店も」を選ぶと加盟店ルールに登録されます。</p>
+{% if not transactions %}
+  <section class="card center"><p>確認が必要な明細はありません 🎉</p></section>
+{% endif %}
+<ul class="review-list">
+{% for t in transactions %}
+  <li class="card review-item">
+    <div class="review-head">
+      <span class="tx-date">{{ t.usage_date.strftime('%Y/%m/%d') }}</span>
+      <span class="tx-merchant">{{ t.merchant_normalized }}</span>
+      <span class="tx-amount">{{ t.amount|yen }}<small>円</small></span>
+    </div>
+    <div class="review-meta">
+      <span class="badge cat">{{ t.category or '未分類' }}</span>
+      <span class="badge src src-{{ t.classification_source }}">{{ t.classification_source|source_label }}{% if t.confidence is not none %} {{ t.confidence|conf }}{% endif %}</span>
+      {% if t.card %}<span class="muted">{{ t.card }}</span>{% endif %}
+    </div>
+    <form method="post" action="{{ url_for('ledger.update_category', tx_id=t.id) }}" class="review-form">
+      <input type="hidden" name="back" value="{{ url_for('ledger.review') }}">
+      <input type="hidden" name="memo" value="{{ t.memo }}">
+      <select name="category" required>
+        {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == t.category }}>{{ c }}</option>{% endfor %}
+      </select>
+      <label class="radio"><input type="radio" name="scope" value="once" checked> 今回だけ</label>
+      <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店も</label>
+      <button class="btn btn-primary btn-sm" type="submit">確定</button>
+      <a class="btn btn-sm" href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=url_for('ledger.review')) }}">詳細・内訳</a>
+    </form>
+  </li>
+{% endfor %}
+</ul>
+{% endblock %}

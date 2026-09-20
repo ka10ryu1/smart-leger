@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}加盟店ルール{% endblock %}
+{% block content %}
+<h1>加盟店ルール</h1>
+<p class="hint">ここに登録した加盟店は、取込時に Jev を使わずこのカテゴリになります。明細編集で「今後この加盟店も」を選ぶと自動で追加されます。部分一致(パターンが加盟店名に含まれる)でも適用されます。</p>
+<section class="card">
+  <h2>ルールを追加</h2>
+  <form method="post" action="{{ url_for('ledger.add_rule') }}" class="filters">
+    <label>加盟店パターン <input type="text" name="merchant_pattern" required placeholder="例: KYASH"></label>
+    <label>カテゴリ
+      <select name="category" required>{% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}</select>
+    </label>
+    <button class="btn btn-primary" type="submit">追加</button>
+  </form>
+</section>
+<section class="card">
+  <h2>登録済み <span class="count">{{ rules|length }} 件</span></h2>
+  {% if rules %}
+  <ul class="rule-list">
+    {% for r in rules %}
+    <li class="rule-item">
+      <span class="rule-pattern">{{ r.merchant_pattern }}</span>
+      <span class="badge cat">{{ r.category }}</span>
+      <span class="muted small">{{ r.created_at }}</span>
+      <form method="post" action="{{ url_for('ledger.remove_rule') }}" class="inline" onsubmit="return confirm('このルールを削除しますか?')">
+        <input type="hidden" name="merchant_pattern" value="{{ r.merchant_pattern }}">
+        <button class="btn btn-sm btn-danger" type="submit">削除</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">ルールはまだありません。</p>
+  {% endif %}
+</section>
+{% endblock %}

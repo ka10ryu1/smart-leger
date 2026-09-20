@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}CSV 取込{% endblock %}
+{% block content %}
+<h1>CSV 取込</h1>
+
+{% if not preview %}
+<section class="card">
+  <p>クレジットカード会社の Web サイトからダウンロードした利用明細 CSV を選択してください。すぐには保存されず、まずプレビューを表示します。</p>
+  <form method="post" action="{{ url_for('ledger.import_preview') }}" enctype="multipart/form-data" class="stack">
+    <input type="file" name="csv_file" accept=".csv,text/csv" required>
+    <button class="btn btn-primary" type="submit">解析してプレビュー</button>
+  </form>
+</section>
+{% else %}
+<section class="card">
+  <h2>プレビュー: {{ preview.filename }}</h2>
+  <dl class="kv">
+    <dt>カード</dt><dd>{{ preview.card or '-' }}</dd>
+    <dt>文字コード</dt><dd>{{ preview.encoding }}(ヘッダー {{ preview.header_line }} 行目)</dd>
+    <dt>明細件数</dt><dd>{{ preview.rows|length }} 件</dd>
+    <dt>新規</dt><dd><strong class="ok">{{ preview.new_count }} 件</strong></dd>
+    <dt>重複(取込済み)</dt><dd><strong class="{{ 'warn' if preview.duplicate_count }}">{{ preview.duplicate_count }} 件</strong></dd>
+  </dl>
+  {% if preview.already_imported %}
+    <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }})</div>
+  {% elif preview.new_count == 0 %}
+    <div class="flash flash-warning">新規の明細はありません。すべて取込済みの明細と一致しました。</div>
+  {% endif %}
+  {% for w in preview.warnings %}<div class="flash flash-warning">{{ w }}</div>{% endfor %}
+
+  <div class="actions">
+    {% if not preview.already_imported and preview.new_count > 0 %}
+    <form method="post" action="{{ url_for('ledger.import_commit') }}" class="inline" id="commit-form">
+      <input type="hidden" name="token" value="{{ preview.token }}">
+      <button class="btn btn-primary" type="submit" id="commit-btn">{{ preview.new_count }} 件を取り込む</button>
+      <span class="hint" id="commit-hint">新規明細だけを分類して Excel に保存します{% if jev_enabled %}(Jev への問い合わせに数秒〜数十秒かかることがあります){% endif %}。</span>
+    </form>
+    {% endif %}
+    <form method="post" action="{{ url_for('ledger.import_discard') }}" class="inline">
+      <input type="hidden" name="token" value="{{ preview.token }}">
+      <button class="btn" type="submit">キャンセル</button>
+    </form>
+  </div>
+</section>
+
+<section class="card">
+  <h2>明細プレビュー</h2>
+  <div class="tx-table-wrap">
+  <table class="tx-table preview">
+    <thead><tr><th>#</th><th>利用日</th><th>加盟店</th><th class="num">金額</th><th>状態</th></tr></thead>
+    <tbody>
+    {% for r in preview.rows %}
+      <tr class="{{ 'dup' if r.duplicate }}">
+        <td class="muted">{{ r.source_line }}</td>
+        <td class="nowrap">{{ r.usage_date }}</td>
+        <td class="merchant" title="{{ r.merchant_raw }}">{{ r.merchant_normalized }}</td>
+        <td class="num">{{ r.amount|yen }} 円</td>
+        <td>{% if r.duplicate %}<span class="badge dup">重複{% if r.existing_category %}: {{ r.existing_category }}{% endif %}</span>{% else %}<span class="badge new">新規</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <ul class="tx-cards">
+  {% for r in preview.rows %}
+    <li class="tx-card {{ 'dup' if r.duplicate }}">
+      <div class="tx-card-row">
+        <span class="tx-date">{{ r.usage_date[5:]|replace('-', '/') }}</span>
+        <span class="tx-merchant">{{ r.merchant_normalized }}</span>
+        <span class="tx-amount">{{ r.amount|yen }}<small>円</small></span>
+      </div>
+      <div class="tx-card-row sub">{% if r.duplicate %}<span class="badge dup">重複</span>{% else %}<span class="badge new">新規</span>{% endif %}</div>
+    </li>
+  {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>取込履歴</h2>
+  {% if imports %}
+  <div class="tx-table-wrap">
+  <table class="tx-table">
+    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th></tr></thead>
+    <tbody>
+    {% for i in imports %}
+      <tr><td class="nowrap">{{ i.imported_at }}</td><td>{{ i.filename }}</td><td>{{ i.card }}</td><td class="num">{{ i.row_count }}</td><td class="muted mono">{{ i.file_hash[:12] }}…</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <ul class="tx-cards">
+  {% for i in imports %}
+    <li class="tx-card"><div class="tx-card-row"><span class="tx-date">{{ i.imported_at[:10] }}</span><span class="tx-merchant">{{ i.filename }}</span><span class="tx-amount">{{ i.row_count }}<small>件</small></span></div></li>
+  {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">まだ取込履歴はありません。</p>
+  {% endif %}
+</section>
+{% endblock %}

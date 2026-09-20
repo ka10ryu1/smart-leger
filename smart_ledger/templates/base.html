@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Smart Ledger{% endblock %} - Smart Ledger</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="{{ url_for('ledger.dashboard') }}">Smart Ledger</a>
+  <nav class="nav">
+    <a href="{{ url_for('ledger.dashboard') }}" class="{{ 'active' if request.endpoint == 'ledger.dashboard' }}">ホーム</a>
+    <a href="{{ url_for('ledger.transactions') }}" class="{{ 'active' if request.endpoint == 'ledger.transactions' }}">明細</a>
+    <a href="{{ url_for('ledger.import_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('ledger.import') }}">取込</a>
+    <a href="{{ url_for('ledger.review') }}" class="{{ 'active' if request.endpoint == 'ledger.review' }}">要確認</a>
+    <a href="{{ url_for('ledger.rules') }}" class="{{ 'active' if request.endpoint == 'ledger.rules' }}">ルール</a>
+  </nav>
+</header>
+<main class="container">
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flashes">
+      {% for cat, msg in messages %}
+        <div class="flash flash-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% if not jev_enabled %}
+    <div class="notice">TYPESAFE_API_KEY が未設定です。未知の加盟店は自動分類されず「その他・要確認」になります。<code>.env</code> を設定して再起動してください。</div>
+  {% endif %}
+  {% block content %}{% endblock %}
+</main>
+<footer class="footer">
+  <span>正本: <code>{{ excel_path }}</code></span>
+  <span>Dropbox バックアップ: {{ '有効' if dropbox_enabled else '未設定' }}</span>
+</footer>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "_tx_list.html" import tx_list %}
+{% block title %}{{ month|month_label }} ダッシュボード{% endblock %}
+{% block content %}
+<div class="month-nav">
+  <a class="btn" href="{{ url_for('ledger.dashboard', month=prev_month) }}">← 前月</a>
+  <form method="get" class="month-select">
+    <select name="month" onchange="this.form.submit()">
+      {% if month not in months %}<option value="{{ month }}" selected>{{ month|month_label }}</option>{% endif %}
+      {% for m in months %}<option value="{{ m }}" {{ 'selected' if m == month }}>{{ m|month_label }}</option>{% endfor %}
+    </select>
+  </form>
+  <a class="btn" href="{{ url_for('ledger.dashboard', month=next_month) }}">翌月 →</a>
+</div>
+
+{% if not has_data %}
+  <section class="card center">
+    <h2>まだ明細がありません</h2>
+    <p>クレジットカード会社からダウンロードした CSV を取り込むと、ここに月次集計が表示されます。</p>
+    <a class="btn btn-primary" href="{{ url_for('ledger.import_page') }}">CSV を取り込む</a>
+  </section>
+{% endif %}
+
+<section class="stats">
+  <div class="stat card">
+    <div class="stat-label">{{ month|month_label }} の総支出</div>
+    <div class="stat-value">{{ summary.total|yen }}<small> 円</small></div>
+    <div class="stat-sub">{{ summary.transaction_count }} 件</div>
+  </div>
+  <div class="stat card">
+    <div class="stat-label">前月比</div>
+    {% if summary.diff is not none %}
+      <div class="stat-value {{ 'up' if summary.diff > 0 else 'down' if summary.diff < 0 }}">{{ '+' if summary.diff > 0 }}{{ summary.diff|yen }}<small> 円</small></div>
+      <div class="stat-sub">前月 {{ summary.prev_total|yen }} 円{% if summary.diff_ratio is not none %} ({{ '+' if summary.diff > 0 }}{{ summary.diff_ratio|pct }}){% endif %}</div>
+    {% else %}
+      <div class="stat-value muted">-</div>
+      <div class="stat-sub">前月のデータなし</div>
+    {% endif %}
+  </div>
+  <a class="stat card link" href="{{ url_for('ledger.review') }}">
+    <div class="stat-label">要確認</div>
+    <div class="stat-value {{ 'warn' if review_count }}">{{ review_count }}<small> 件</small></div>
+    <div class="stat-sub">confidence &lt; {{ threshold }} / エラー / 未分類</div>
+  </a>
+</section>
+
+<section class="card">
+  <h2>カテゴリ別支出</h2>
+  {% if summary.categories %}
+  <ul class="cat-bars">
+    {% for c in summary.categories %}
+    <li>
+      <a href="{{ url_for('ledger.transactions', month=month, category=c.category) }}">
+        <div class="cat-row">
+          <span class="cat-name">{{ c.category }}</span>
+          <span class="cat-amount">{{ c.amount|yen }} 円</span>
+          <span class="cat-ratio">{{ c.ratio|pct }}</span>
+        </div>
+        <div class="bar"><div class="bar-fill c{{ loop.index0 % 10 }}" style="width: {{ (c.ratio * 100)|round(1) }}%"></div></div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="hint">内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、総支出には 1 回だけ計上しています。</p>
+  {% else %}
+  <p class="empty">この月の明細はありません。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>直近 6 か月の推移</h2>
+  {% set max_total = trend|map(attribute=1)|max %}
+  <div class="trend">
+    {% for m, total in trend %}
+    <a class="trend-col" href="{{ url_for('ledger.dashboard', month=m) }}" title="{{ m|month_label }} {{ total|yen }} 円">
+      <div class="trend-bar-wrap"><div class="trend-bar {{ 'current' if m == month }}" style="height: {{ (total / max_total * 100)|round(1) if max_total else 0 }}%"></div></div>
+      <div class="trend-label">{{ m[5:]|int }}月</div>
+      <div class="trend-value">{{ (total / 1000)|round|int if total else 0 }}k</div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>最近の明細</h2>
+    <a class="btn btn-sm" href="{{ url_for('ledger.transactions', month=month) }}">すべて見る</a>
+  </div>
+  {{ tx_list(recent, alloc_ids) }}
+</section>
+{% endblock %}
