@@ -215,7 +215,7 @@ class Importer:
             preview: 確定するプレビュー
         """
         existing_keys = data.existing_row_keys()  # プレビュー後に変わっている可能性があるので再確認
-        categories = data.category_names()
+        categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
         import_id = new_id('imp')
         imported_at = now_iso()
 

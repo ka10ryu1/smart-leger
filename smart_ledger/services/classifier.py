@@ -26,7 +26,7 @@ class Classifier(Protocol):
     """未知の加盟店にカテゴリを付ける分類器のインターフェース"""
 
     def classify(
-        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
+        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str] | dict[str, str]
     ) -> ClassificationResult:
         """加盟店を分類する
 
@@ -34,7 +34,7 @@ class Classifier(Protocol):
             merchant_normalized: 正規化済みの加盟店名
             amount: 金額（円）
             usage_date: 利用日
-            categories: 選択肢となるカテゴリ名
+            categories: 選択肢となるカテゴリ名（dict なら 名前 → 説明）
         """
         ...
 
@@ -50,7 +50,7 @@ class JevClassifier:
         self.client = client
 
     def classify(
-        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
+        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str] | dict[str, str]
     ) -> ClassificationResult:
         """Jev に問い合わせて分類する（失敗しても例外を投げず source=error で返す）
 
@@ -58,9 +58,13 @@ class JevClassifier:
             merchant_normalized: 正規化済みの加盟店名
             amount: 金額（円）
             usage_date: 利用日
-            categories: 選択肢となるカテゴリ名
+            categories: 選択肢となるカテゴリ名（dict なら 名前 → 説明 をそのまま criteria に使う）
         """
-        criteria = {c: CATEGORY_DESCRIPTIONS.get(c, c) for c in categories}
+        criteria = (
+            dict(categories)
+            if isinstance(categories, dict)
+            else {c: CATEGORY_DESCRIPTIONS.get(c, c) for c in categories}
+        )
         try:
             choice = self.client.choose_category(merchant_normalized, amount, usage_date, criteria)
         except JevError as exc:
@@ -88,7 +92,7 @@ class NullClassifier:
         self.reason = reason
 
     def classify(
-        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
+        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str] | dict[str, str]
     ) -> ClassificationResult:
         """常に その他 / source=error を返す
 
@@ -133,7 +137,7 @@ class ClassificationPipeline:
         merchant_normalized: str,
         amount: int,
         usage_date: date,
-        categories: list[str],
+        categories: list[str] | dict[str, str],
         rules: list[MerchantRule],
     ) -> ClassificationResult:
         """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は 1 回だけ問い合わせる）
@@ -142,7 +146,7 @@ class ClassificationPipeline:
             merchant_normalized: 正規化済みの加盟店名
             amount: 金額（円）
             usage_date: 利用日
-            categories: 選択肢となるカテゴリ名
+            categories: 選択肢となるカテゴリ名（dict なら 名前 → 説明）
             rules: 加盟店ルール
         """
         rule = match_rule(rules, merchant_normalized)

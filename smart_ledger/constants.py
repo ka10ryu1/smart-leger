@@ -82,6 +82,7 @@ EXCEL_COLUMN_WIDTHS: dict[str, int] = {
     'row_count': 10,
     'transaction_id': 18,
     'sort_order': 10,
+    'description': 48,
 }
 
 # --------------------------------------------------------------- ログ / UI

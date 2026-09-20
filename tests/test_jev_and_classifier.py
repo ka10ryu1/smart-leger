@@ -317,3 +317,17 @@ def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
     """
     payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
     assert parse_choice_response(payload).confidence == pytest.approx(float(raw))
+
+
+def test_dict_categories_are_sent_as_criteria() -> None:
+    """categories に 名前 → 説明 の dict を渡すと、その説明がそのまま Jev の criteria になる"""
+    seen: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen['criteria'] = json.loads(request.content)['questions']['category']['criteria']
+        return choice_response('ペット', 0.9)
+
+    criteria = {'ペット': 'フード・動物病院', 'その他': '上記以外'}
+    result = JevClassifier(make_client(handler)).classify('PETSHOP', 3000, date(2026, 8, 1), criteria)
+    assert seen['criteria'] == criteria
+    assert result.category == 'ペット'
