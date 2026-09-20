@@ -137,6 +137,8 @@ class ClassificationPipeline:
     ) -> ClassificationResult:
         """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は 1 回だけ問い合わせる）
 
+        キャッシュした結果のカテゴリが categories に無い（確定待ちの間に名称変更・削除された）場合は捨てて再問い合わせする
+
         Args:
             merchant_normalized: 正規化済みの加盟店名
             amount: 金額（円）
@@ -149,7 +151,7 @@ class ClassificationPipeline:
             return ClassificationResult(category=rule.category, confidence=None, source=SOURCE_RULE)
 
         cached = self.cache.get(merchant_normalized)
-        if cached is not None:
+        if cached is not None and cached.category in categories:
             return cached
 
         result = self.fallback.classify(merchant_normalized, amount, usage_date, categories)

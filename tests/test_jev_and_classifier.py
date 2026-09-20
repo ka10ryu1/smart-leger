@@ -228,6 +228,26 @@ def test_same_merchant_queried_once_per_import(criteria: dict[str, str]) -> None
     assert calls['n'] == 1
 
 
+def test_cached_result_is_dropped_when_category_removed(criteria: dict[str, str]) -> None:
+    """キャッシュしたカテゴリが選択肢から消えていれば（名称変更・削除後）再問い合わせして新しい結果を使う
+
+    Args:
+        criteria: 初期カテゴリの 名前 → 説明
+    """
+    answers = iter(['交通', '日用品・買い物'])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return choice_response(next(answers), 0.9)
+
+    pipeline = ClassificationPipeline(JevClassifier(make_client(handler)), threshold=0.85)
+    assert pipeline.classify('テスト駅', 100, date(2026, 8, 20), criteria, []).category == '交通'
+    renamed = {('移動' if k == '交通' else k): v for k, v in criteria.items()}
+    assert pipeline.classify('テスト駅', 100, date(2026, 8, 20), renamed, []).category == '日用品・買い物'
+    assert (
+        pipeline.classify('テスト駅', 100, date(2026, 8, 20), renamed, []).category == '日用品・買い物'
+    )  # 新結果をキャッシュ
+
+
 def test_null_classifier_when_no_api_key(criteria: dict[str, str]) -> None:
     """API キー無しの代替分類器は その他 / error を返す
 
