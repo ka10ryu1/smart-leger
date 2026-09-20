@@ -7,15 +7,31 @@ from pathlib import Path
 import pytest
 
 from smart_ledger.config import Config
+from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.services.backup import DropboxBackup
 from smart_ledger.services.excel_repository import ExcelRepository
 
-FIXTURES = Path(__file__).parent / "fixtures"
+
+@pytest.fixture
+def fixtures_dir() -> Path:
+    """tests/fixtures のパス"""
+    return Path(__file__).parent / 'fixtures'
 
 
 @pytest.fixture
-def fixture_csv_bytes() -> bytes:
-    return (FIXTURES / "sample_statement_cp932.csv").read_bytes()
+def fixture_csv_bytes(fixtures_dir: Path) -> bytes:
+    """架空データの CP932 明細 CSV
+
+    Args:
+        fixtures_dir: tests/fixtures のパス
+    """
+    return (fixtures_dir / 'sample_statement_cp932.csv').read_bytes()
+
+
+@pytest.fixture
+def categories() -> list[str]:
+    """初期カテゴリ 10 件"""
+    return list(DEFAULT_CATEGORIES)
 
 
 @pytest.fixture
