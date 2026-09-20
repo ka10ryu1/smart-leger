@@ -78,7 +78,7 @@ def test_running_instance_detects_other_program(http_server: tuple[str, int]) ->
 
 
 def test_running_instance_none_when_port_closed() -> None:
-    """誰も待ち受けていないポートは None（起動してよい）"""
+    """誰も待ち受けていないポート（接続拒否）は None（起動してよい）"""
     assert running_instance(f'http://127.0.0.1:{free_port()}', timeout=0.5) is None
 
 
@@ -99,4 +99,27 @@ def test_running_instance_false_for_non_http_listener() -> None:
     try:
         assert running_instance(f'http://127.0.0.1:{port}', timeout=2.0) is False
     finally:
+        listener.close()
+
+
+def test_running_instance_false_when_listener_is_silent() -> None:
+    """接続は受け付けるが応答しないリスナー（応答の遅い既存インスタンスなど）は空きとみなさない"""
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    connections: list[socket.socket] = []
+
+    def hold_connection() -> None:
+        conn, _ = listener.accept()
+        connections.append(conn)  # 何も返さず接続を保持する
+
+    thread = threading.Thread(target=hold_connection, daemon=True)
+    thread.start()
+    try:
+        assert running_instance(f'http://127.0.0.1:{port}', timeout=0.5) is False
+    finally:
+        for conn in connections:
+            conn.close()
+
         listener.close()

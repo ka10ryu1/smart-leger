@@ -5,7 +5,7 @@ python app.py --open-browser  # 起動後にブラウザを開く（start.ps1 �
 
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
 （Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。
-別のプログラムがポートを使っている場合はメッセージを出して終了コード 1 で終わる
+ポートが使用中で Smart Ledger と確認できない場合（別のプログラム、応答しないインスタンス）はメッセージを出して終了コード 1 で終わる
 """
 
 from __future__ import annotations
@@ -33,7 +33,9 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
         app_id: /health が返す app の値（routes.health と一致させる）
 
     Returns:
-        True: Smart Ledger が応答した / False: 別のプログラムが応答した / None: 何も応答しない（ポートは空き）
+        True: Smart Ledger が応答した /
+        False: ポートは使用中だが Smart Ledger と確認できない（別のプログラム、または timeout 内に応答しない）/
+        None: 接続が拒否された（誰も待ち受けていない）
     """
     try:
         with urllib.request.urlopen(f'{url}/health', timeout=timeout) as response:
@@ -42,8 +44,15 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
         return False  # 応答はあるが /health が無い → 別のプログラム
     except http.client.HTTPException:
         return False  # HTTP として解釈できない応答 → 別のプログラム
-    except (urllib.error.URLError, OSError):
-        return None  # 接続できない → ポートは空き
+    except urllib.error.URLError as exc:
+        if isinstance(exc.reason, ConnectionRefusedError):
+            return None  # 接続拒否 → ポートは空き
+
+        return False  # 接続段階のタイムアウトなど → 空きとは判断しない
+    except ConnectionRefusedError:
+        return None
+    except OSError:
+        return False  # 接続後の読み取りタイムアウトなど → 何かが待ち受けているので空きとは判断しない
 
     try:
         payload = json.loads(body)
@@ -60,7 +69,7 @@ def main(browser_delay_seconds: float = 1.2) -> int:
         browser_delay_seconds: --open-browser 指定時にブラウザを開くまでの待ち秒数
 
     Returns:
-        終了コード（既に起動済みなら 0、ポートが別プログラムに使われていれば 1）
+        終了コード（既に起動済みなら 0、ポートが使用中で Smart Ledger と確認できなければ 1）
     """
     parser = argparse.ArgumentParser(description='Smart Ledger')
     parser.add_argument('--open-browser', action='store_true', help='起動後にブラウザで開く')
@@ -84,7 +93,11 @@ def main(browser_delay_seconds: float = 1.2) -> int:
             return 0
 
         if already is False:
-            print(f'ポート {port} は別のプログラムが使用中です。.env の SMART_LEDGER_PORT を変更してください。')
+            print(
+                f'ポート {port} は使用中ですが Smart Ledger の応答を確認できませんでした'
+                '(別のプログラム、または応答しない起動中のインスタンス)。'
+                '起動中のウィンドウを閉じるか、.env の SMART_LEDGER_PORT を変更してください。'
+            )
             return 1
 
     app = create_app(config)
