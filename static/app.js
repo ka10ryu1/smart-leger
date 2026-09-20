@@ -69,6 +69,22 @@
     recalc();
   }
 
+  // ---- ルールパターンの入力に合わせて「一致する明細が他に N 件」を更新 ----
+  var patternInput = document.getElementById('rule-pattern');
+  var previewCount = document.getElementById('rule-preview-count');
+  if (patternInput && previewCount) {
+    var timer = null;
+    patternInput.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(function () {
+        fetch(previewCount.dataset.url + '?pattern=' + encodeURIComponent(patternInput.value))
+          .then(function (res) { return res.ok ? res.json() : null; })
+          .then(function (json) { if (json) previewCount.textContent = json.count; })
+          .catch(function () { /* 表示用なので失敗は無視 */ });
+      }, 300);
+    });
+  }
+
   // ---- 取込確定ボタンの二重送信防止 ----
   var commitForm = document.getElementById('commit-form');
   if (commitForm) {

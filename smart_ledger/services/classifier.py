@@ -17,7 +17,8 @@ from typing import Protocol
 from ..constants import FALLBACK_CATEGORY, SOURCE_ERROR, SOURCE_JEV, SOURCE_RULE
 from ..models import ClassificationResult, MerchantRule
 from .jev_client import JevClient, JevError
-from .merchant_rules import match_rule
+from .merchant_rules import match_prepared
+from .normalize import merchant_key
 
 logger = logging.getLogger(__name__)
 
@@ -133,9 +134,9 @@ class ClassificationPipeline:
         amount: int,
         usage_date: date,
         categories: dict[str, str],
-        rules: list[MerchantRule],
+        prepared_rules: list[tuple[MerchantRule, str, str]],
     ) -> ClassificationResult:
-        """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は 1 回だけ問い合わせる）
+        """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は請求月が違っても 1 回だけ問い合わせる）
 
         キャッシュした結果のカテゴリが categories に無い（確定待ちの間に名称変更・削除された）場合は捨てて再問い合わせする
 
@@ -144,19 +145,21 @@ class ClassificationPipeline:
             amount: 金額（円）
             usage_date: 利用日
             categories: 選択肢のカテゴリ名 → 説明
-            rules: 加盟店ルール
+            prepared_rules: merchant_rules.prepare_rules() 済みの加盟店ルール（取込 1 回につき 1 度だけ前計算する）
         """
-        rule = match_rule(rules, merchant_normalized)
+        rule = match_prepared(prepared_rules, merchant_normalized)
         if rule is not None:
             return ClassificationResult(category=rule.category, confidence=None, source=SOURCE_RULE)
 
-        cached = self.cache.get(merchant_normalized)
+        # 「7ガツブン X」と「8ガツブン X」は同じ加盟店として 1 回だけ問い合わせる
+        cache_key = merchant_key(merchant_normalized)
+        cached = self.cache.get(cache_key)
         if cached is not None and cached.category in categories:
             return cached
 
         result = self.fallback.classify(merchant_normalized, amount, usage_date, categories)
         if result.source != SOURCE_ERROR:  # エラー結果はキャッシュしない
-            self.cache[merchant_normalized] = result
+            self.cache[cache_key] = result
 
         return result
 

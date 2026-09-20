@@ -30,7 +30,7 @@ from .constants import (
     SOURCE_RULE,
     UNCLASSIFIED_LABEL,
 )
-from .models import LedgerData, MerchantRule, Transaction, now_iso
+from .models import LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
     month_label,
@@ -53,12 +53,15 @@ from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
 from .services.importer import Importer, ImportResult
 from .services.jev_client import JevClient
-from .services.merchant_rules import delete_rule, match_rule, suggest_rule_pattern, upsert_rule
+from .services.merchant_rules import delete_rule, match_rule, preview_rule_targets, rule_targets, upsert_rule
+from .services.normalize import merchant_key
 
 logger = logging.getLogger(__name__)
 
 bp = Blueprint('ledger', __name__)
 bp.add_app_template_filter(month_label, 'month_label')
+# 加盟店名 → ルール用の既定パターン（請求月などを除いた加盟店キー）
+bp.add_app_template_filter(merchant_key, 'rule_pattern')
 
 
 @dataclass
@@ -154,16 +157,6 @@ def safe_back() -> str:
         return value
 
     return url_for('ledger.transactions')
-
-
-@bp.app_template_filter('rule_pattern')
-def rule_pattern_filter(merchant_normalized: str) -> str:
-    """加盟店名からルール用の既定パターン（請求月などを除いた加盟店キー）を作る
-
-    Args:
-        merchant_normalized: 正規化済みの加盟店名
-    """
-    return suggest_rule_pattern(merchant_normalized)
 
 
 @bp.app_template_filter('source_label')
@@ -348,15 +341,8 @@ def edit_transaction(tx_id: str) -> str:
     if tx is None:
         abort(404)
 
-    # 提案パターンをルール化したときに一致する他の明細（手動修正済みは反映対象外なので除く）。
-    # match_rule はカテゴリ無しのルールを無視するため、仮のカテゴリを入れて照合する
-    suggested = suggest_rule_pattern(tx.merchant_normalized)
-    probe = [MerchantRule(merchant_pattern=suggested, category='-')]
-    same_merchant = [
-        t
-        for t in data.transactions
-        if t.id != tx.id and t.classification_source != SOURCE_MANUAL and match_rule(probe, t.merchant_normalized)
-    ]
+    # 提案パターンをルール化したときの反映対象（手動修正済みは除く）
+    same_merchant = preview_rule_targets(data, merchant_key(tx.merchant_normalized), tx.id)
     return render_template(
         'edit.html',
         tx=tx,
@@ -364,9 +350,23 @@ def edit_transaction(tx_id: str) -> str:
         categories=data.category_names(),
         rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),
-        rule_pattern_suggestion=suggested,
         back=safe_back(),
     )
+
+
+@bp.route('/transactions/<tx_id>/rule-preview')
+def rule_preview(tx_id: str) -> dict[str, int]:
+    """入力中のルールパターンで登録した場合に反映される他の明細の件数を返す（編集画面の件数表示用。Flask が JSON にする）
+
+    Args:
+        tx_id: 編集中の明細 ID
+    """
+    data = load_data()
+    if data.find_transaction(tx_id) is None:
+        abort(404)
+
+    pattern = request.args.get('pattern', '')
+    return {'count': len(preview_rule_targets(data, pattern, tx_id))}
 
 
 def save_and_redirect[T](
@@ -417,25 +417,16 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         if scope != 'always':
             return 0, '', True
 
-        rule = upsert_rule(data, rule_pattern or suggest_rule_pattern(tx.merchant_normalized), category)
-        applied_others = 0
-        for other in data.transactions:  # ルールに一致し、手動修正されていない明細にも反映する
-            is_target = (
-                other.id != tx.id
-                and other.classification_source != SOURCE_MANUAL
-                and other.category != category
-                and match_rule([rule], other.merchant_normalized) is not None
-            )
-            if not is_target:
-                continue
-
+        rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
+        targets = [
+            o for o in rule_targets(data.transactions, data.merchant_rules, rule, tx.id) if o.category != category
+        ]
+        for other in targets:
             other.category = category
             other.confidence = None
             other.classification_source = SOURCE_RULE
-            applied_others += 1
 
-        matches_self = match_rule([rule], tx.merchant_normalized) is not None
-        return applied_others, rule.merchant_pattern, matches_self
+        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None
 
     try:
         applied_others, pattern, matches_self = svc().repo.update(mutate)
