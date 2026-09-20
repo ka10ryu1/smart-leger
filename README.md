@@ -78,6 +78,7 @@ powershell -ExecutionPolicy Bypass -File .\setup.ps1
 #### うまく動かないとき
 
 - **ウィンドウがすぐ閉じる**: `setup.cmd` / `start.cmd` から起動してください。`.ps1` を右クリック → 「PowerShell で実行」した場合、実行ポリシーのエラーはスクリプトが始まる前に出るため一瞬で閉じます。`setup.ps1` 自体は終了時に Enter 待ちをし、実行内容を `logs\setup_YYYYMMDD_HHMMSS.log` に記録します(`-NoPause` で待ちを省略できます)
+- **起動したのに画面が古い / 変更が反映されない**: 起動中のウィンドウを閉じずに再度 `start.cmd` を実行すると、Windows では同じポートに 2 つ目のサーバーが同居し、古い方が応答し続けることがあります。現在は 2 つ目の起動を検知して既存の画面をブラウザで開くだけにしています。コードを更新したら、起動中のウィンドウで Ctrl+C してから `start.cmd` を実行してください
 - **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行するか、上記の `-ExecutionPolicy Bypass` 付きで実行してください。`git clone` したファイルには付きません
 - **Python 3.12 以上が見つかりません**: `setup.ps1` は `py` ランチャー → `python` → レジストリの順に探し、試した候補をログに出します。Microsoft Store 版 Python でも動作します。python.org 版をインストールする場合は「Add python.exe to PATH」にチェックしてください
 - **pip install に失敗**: ネットワーク・プロキシ設定を確認してください。会社ネットワークでは `pip config set global.proxy http://...` が必要な場合があります
