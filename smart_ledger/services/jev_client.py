@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from dataclasses import dataclass
 from datetime import date
@@ -77,8 +78,32 @@ def build_request_body(
     }
 
 
+def validate_confidence(value: Any) -> float | None:
+    """confidence を 0〜1 の有限な float に変換する（変換不能・NaN・inf・範囲外は None）
+
+    Args:
+        value: レスポンス中の confidence（None なら None を返す）
+    """
+    if value is None:
+        return None
+
+    try:
+        confidence = float(value)
+    except (TypeError, ValueError):
+        logger.warning('jev confidence ignored: reason=not a number value=%r', value)
+        return None
+
+    if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+        logger.warning('jev confidence ignored: reason=out of range value=%r', value)
+        return None
+
+    return confidence
+
+
 def parse_choice_response(payload: dict[str, Any], question_id: str = 'category') -> JevChoice:
     """レスポンス JSON から choice / confidence / probabilities を取り出す
+
+    confidence が無い・不正なときは probabilities[choice] で補い、それも不正なら None（要確認扱い）にする
 
     Args:
         payload: レスポンス JSON
@@ -105,16 +130,9 @@ def parse_choice_response(payload: dict[str, Any], question_id: str = 'category'
             except (TypeError, ValueError):
                 logger.warning('jev probability ignored: option=%s value=%r', key, value)
 
-    confidence: float | None
-    try:
-        confidence_raw = answer.get('confidence')
-        confidence = float(confidence_raw) if confidence_raw is not None else None
-    except (TypeError, ValueError):
-        logger.warning('jev confidence ignored: value=%r', answer.get('confidence'))
-        confidence = None
-
+    confidence = validate_confidence(answer.get('confidence'))
     if confidence is None and choice in probabilities:
-        confidence = probabilities[choice]
+        confidence = validate_confidence(probabilities[choice])
 
     return JevChoice(choice=choice, confidence=confidence, probabilities=probabilities)
 

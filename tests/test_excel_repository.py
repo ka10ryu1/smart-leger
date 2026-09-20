@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+import threading
+import time
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
 from openpyxl import Workbook, load_workbook
 
 from smart_ledger.constants import DEFAULT_CATEGORIES
-from smart_ledger.models import Allocation, ImportRecord, MerchantRule, Transaction
-from smart_ledger.services.backup import DropboxBackup
+from smart_ledger.models import Allocation, Category, ImportRecord, LedgerData, MerchantRule, Transaction
+from smart_ledger.services.backup import DropboxBackup, backup_destination
 from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, sheet_columns
 
 
@@ -116,9 +118,9 @@ def test_dropbox_enabled_copies_latest_and_backup(tmp_path: Path) -> None:
     """
     dropbox = tmp_path / 'Dropbox' / 'SmartLedger'
     repo = ExcelRepository(tmp_path / 'household.xlsx', backup_dir=tmp_path / 'backup', dropbox=DropboxBackup(dropbox))
-    repo.save(repo.load())
+    repo.save(repo.load())  # load() の新規作成と save() で 2 回保存される
     assert (dropbox / 'latest' / 'household.xlsx').exists()
-    assert len(list((dropbox / 'backup').glob('household_*.xlsx'))) == 1
+    assert len(list((dropbox / 'backup').glob('household_*.xlsx'))) == 2
     assert repo.last_dropbox_result is not None
 
 
@@ -208,3 +210,74 @@ def test_dropbox_backup_is_pruned(tmp_path: Path) -> None:
     repo.save(repo.load())
     remaining = list((dropbox / 'backup').glob('household_*.xlsx'))
     assert len(remaining) == 1 and remaining[0] != old
+
+
+def test_concurrent_updates_are_serialized(repo: ExcelRepository) -> None:
+    """並行する update でも先に保存した側の変更が後の保存で消えない
+
+    Args:
+        repo: 一時ディレクトリ上のリポジトリ
+    """
+    repo.load()
+
+    def worker(name: str, delay: float) -> None:
+        def mutate(data: LedgerData) -> None:
+            time.sleep(delay)  # Jev 呼び出し待ちを模擬
+            data.categories.append(Category(category=name, sort_order=99))
+
+        repo.update(mutate)
+
+    threads = [threading.Thread(target=worker, args=('A', 0.3)), threading.Thread(target=worker, args=('B', 0.1))]
+    for t in threads:
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    names = {c.category for c in repo.load().categories}
+    assert {'A', 'B'} <= names
+
+
+def test_dropbox_backup_names_do_not_collide_within_same_second(tmp_path: Path) -> None:
+    """連続して 2 回コピーしても Dropbox の backup が 2 世代残り、内容も上書きされない（同一秒内でも同様）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    dropbox = tmp_path / 'Dropbox' / 'SmartLedger'
+    backup = DropboxBackup(dropbox)
+    source = tmp_path / 'household.xlsx'
+    source.write_bytes(b'v1')
+    first = backup.copy(source)
+    source.write_bytes(b'v2')
+    second = backup.copy(source)
+    assert first is not None and second is not None
+    assert first['backup'] != second['backup']
+    assert first['backup'].read_bytes() == b'v1'
+    assert second['backup'].read_bytes() == b'v2'
+    assert len(list((dropbox / 'backup').glob('household_*.xlsx'))) == 2
+
+
+def test_backup_destination_probes_until_unused(tmp_path: Path) -> None:
+    """同じ時刻値で繰り返し呼んでも、マイクロ秒・連番を付けて未使用のパスを返す
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    source = tmp_path / 'household.xlsx'
+    backup_dir = tmp_path / 'backup'
+    backup_dir.mkdir()
+    now = datetime(2026, 9, 20, 12, 0, 0, 123456)
+    names = []
+    for _ in range(4):
+        dest = backup_destination(source, backup_dir, now)
+        dest.write_bytes(b'x')
+        names.append(dest.name)
+
+    assert names == [
+        'household_20260920_120000.xlsx',
+        'household_20260920_120000_123456.xlsx',
+        'household_20260920_120000_123456_01.xlsx',
+        'household_20260920_120000_123456_02.xlsx',
+    ]
+    assert sorted(names) == names  # prune_backups は名前順に古いものから消すので、生成順と一致する必要がある
