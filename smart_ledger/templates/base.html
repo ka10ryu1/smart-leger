@@ -15,6 +15,7 @@
     <a href="{{ url_for('ledger.import_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('ledger.import') }}">取込</a>
     <a href="{{ url_for('ledger.review') }}" class="{{ 'active' if request.endpoint == 'ledger.review' }}">要確認</a>
     <a href="{{ url_for('ledger.rules') }}" class="{{ 'active' if request.endpoint == 'ledger.rules' }}">ルール</a>
+    <a href="{{ url_for('ledger.categories_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('ledger.') and 'categor' in request.endpoint }}">カテゴリ</a>
   </nav>
 </header>
 <main class="container">

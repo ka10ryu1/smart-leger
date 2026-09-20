@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from typing import Callable
 from urllib.parse import urlsplit
 
 from flask import (
@@ -20,7 +21,15 @@ from flask import (
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
-from .constants import MONTH_PATTERN, SOURCE_LABELS, SOURCE_MANUAL, SOURCE_RULE, UNCLASSIFIED_LABEL
+from .constants import (
+    CATEGORY_DESCRIPTIONS,
+    FALLBACK_CATEGORY,
+    MONTH_PATTERN,
+    SOURCE_LABELS,
+    SOURCE_MANUAL,
+    SOURCE_RULE,
+    UNCLASSIFIED_LABEL,
+)
 from .models import LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
@@ -32,6 +41,15 @@ from .services.aggregation import (
 )
 from .services.allocations import AllocationInput, replace_allocations, validate_allocations
 from .services.backup import DropboxBackup
+from .services.categories import (
+    CategoryError,
+    add_category,
+    category_usage,
+    delete_category,
+    edit_category,
+    move_category,
+    sorted_categories,
+)
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
@@ -560,6 +578,79 @@ def remove_rule() -> WerkzeugResponse:
     svc().repo.update(lambda data: delete_rule(data, pattern))
     flash('ルールを削除しました。', 'success')
     return redirect(url_for('ledger.rules'))
+
+
+# --------------------------------------------------------------- categories
+@bp.route('/categories')
+def categories_page() -> str:
+    """カテゴリ管理画面（追加・名称変更・並び替え・削除）"""
+    data = load_data()
+    return render_template(
+        'categories.html',
+        categories=sorted_categories(data),
+        usage=category_usage(data),
+        fallback=FALLBACK_CATEGORY,
+        default_descriptions=CATEGORY_DESCRIPTIONS,
+    )
+
+
+def apply_category_change(mutator: Callable[[LedgerData], object], success: str) -> WerkzeugResponse:
+    """カテゴリ操作を保存し、結果を flash してカテゴリ画面へ戻る
+
+    Args:
+        mutator: LedgerData を書き換える関数（CategoryError で失敗を通知する）
+        success: 成功時に表示するメッセージ
+    """
+    try:
+        svc().repo.update(mutator)
+    except CategoryError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.categories_page'))
+
+    flash(success, 'success')
+    return redirect(url_for('ledger.categories_page'))
+
+
+@bp.route('/categories/add', methods=['POST'])
+def add_category_route() -> WerkzeugResponse:
+    """カテゴリを追加する"""
+    name = request.form.get('name', '')
+    description = request.form.get('description', '')
+    return apply_category_change(
+        lambda data: add_category(data, name, description), f'カテゴリ「{name.strip()}」を追加しました。'
+    )
+
+
+@bp.route('/categories/edit', methods=['POST'])
+def edit_category_route() -> WerkzeugResponse:
+    """カテゴリの名称・説明を変更する（名称変更は明細・ルール・内訳に伝播）"""
+    name = request.form.get('category', '')
+    new_name = request.form.get('new_name', '')
+    description = request.form.get('description', '')
+    changed: list[int] = []
+    response = apply_category_change(
+        lambda data: changed.append(edit_category(data, name, new_name, description)),
+        f'カテゴリ「{new_name.strip()}」を保存しました。',
+    )
+    if changed and changed[0]:
+        flash(f'名称変更を明細・ルール・内訳の {changed[0]} 件に反映しました。', 'info')
+
+    return response
+
+
+@bp.route('/categories/move', methods=['POST'])
+def move_category_route() -> WerkzeugResponse:
+    """カテゴリの表示順を上下に動かす"""
+    name = request.form.get('category', '')
+    delta = -1 if request.form.get('direction') == 'up' else 1
+    return apply_category_change(lambda data: move_category(data, name, delta), '並び順を変更しました。')
+
+
+@bp.route('/categories/delete', methods=['POST'])
+def delete_category_route() -> WerkzeugResponse:
+    """未使用のカテゴリを削除する"""
+    name = request.form.get('category', '')
+    return apply_category_change(lambda data: delete_category(data, name), f'カテゴリ「{name}」を削除しました。')
 
 
 @bp.route('/health')

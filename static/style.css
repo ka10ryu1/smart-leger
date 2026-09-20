@@ -168,3 +168,16 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
   .filters label { flex: 1 1 45%; }
   .month-nav .btn { padding: 0.45rem 0.6rem; }
 }
+
+/* カテゴリ管理 */
+.category-list { list-style: none; padding: 0; margin: 0; }
+.category-item { display: grid; grid-template-columns: auto 1fr auto; gap: 0.6rem; align-items: center; padding: 0.55rem 0; border-bottom: 1px solid var(--line); }
+.category-order { display: flex; gap: 0.25rem; }
+.category-edit { display: grid; grid-template-columns: 1fr 2fr auto; gap: 0.4rem; align-items: center; }
+.category-edit input[readonly] { background: #f3f4f6; color: var(--muted); }
+.category-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 0.3rem; white-space: nowrap; }
+@media (max-width: 720px) {
+  .category-item { grid-template-columns: auto 1fr; }
+  .category-edit { grid-column: 1 / -1; grid-template-columns: 1fr; }
+  .category-meta { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; }
+}

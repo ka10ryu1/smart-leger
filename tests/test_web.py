@@ -44,7 +44,7 @@ def test_pages_render(client: FlaskClient) -> None:
     Args:
         client: テストクライアント
     """
-    for path in ('/', '/transactions', '/review', '/rules', '/import', '/health'):
+    for path in ('/', '/transactions', '/review', '/rules', '/categories', '/import', '/health'):
         assert client.get(path).status_code == 200
 
 
@@ -168,3 +168,50 @@ def test_cross_site_post_is_rejected(client: FlaskClient) -> None:
     assert client.post('/rules/add', data=data, headers={'Origin': 'https://evil.example'}).status_code == 403
     assert client.post('/rules/add', data=data, headers={'Referer': 'https://evil.example/p'}).status_code == 403
     assert client.post('/rules/add', data=data, headers={'Origin': 'http://localhost'}).status_code == 302
+
+
+def test_category_management_flow(client: FlaskClient) -> None:
+    """カテゴリの追加 → 名称変更（ルールへ伝播） → 並び替え → 削除ガード → 削除
+
+    Args:
+        client: テストクライアント
+    """
+    body = client.post(
+        '/categories/add', data={'name': 'ペット', 'description': 'フード・動物病院'}, follow_redirects=True
+    ).get_data(as_text=True)
+    assert 'カテゴリ「ペット」を追加しました' in body
+    assert 'フード・動物病院' in body
+
+    body = client.post('/categories/add', data={'name': 'ペット'}, follow_redirects=True).get_data(as_text=True)
+    assert '既に存在します' in body
+
+    # ルールで使ってから名称変更すると伝播する
+    client.post('/rules/add', data={'merchant_pattern': 'PETSHOP', 'category': 'ペット'}, follow_redirects=True)
+    body = client.post(
+        '/categories/edit',
+        data={'category': 'ペット', 'new_name': 'ペット用品', 'description': ''},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert 'カテゴリ「ペット用品」を保存しました' in body
+    assert '1 件に反映しました' in body
+    assert 'ペット用品' in client.get('/rules').get_data(as_text=True)
+
+    body = client.post(
+        '/categories/move', data={'category': 'ペット用品', 'direction': 'up'}, follow_redirects=True
+    ).get_data(as_text=True)
+    assert '並び順を変更しました' in body
+
+    body = client.post('/categories/delete', data={'category': 'ペット用品'}, follow_redirects=True).get_data(
+        as_text=True
+    )
+    assert '使用中のため削除できません' in body
+
+    body = client.post('/categories/delete', data={'category': 'その他'}, follow_redirects=True).get_data(as_text=True)
+    assert '削除できません' in body
+
+    client.post('/rules/delete', data={'merchant_pattern': 'PETSHOP'}, follow_redirects=True)
+    body = client.post('/categories/delete', data={'category': 'ペット用品'}, follow_redirects=True).get_data(
+        as_text=True
+    )
+    assert 'カテゴリ「ペット用品」を削除しました' in body
+    assert 'ペット用品' not in client.get('/categories').get_data(as_text=True)
