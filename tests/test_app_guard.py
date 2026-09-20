@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -83,7 +84,8 @@ def test_port_is_free_when_nobody_listens() -> None:
 
 
 def test_port_is_free_false_when_listener_exists() -> None:
-    """待ち受け中のポートは空きと判定しない（SO_REUSEADDR 付きの werkzeug 相当のリスナーでも同じ）"""
+    """待ち受け中のポートは空きと判定しない（SO_REUSEADDR 付きの werkzeug 相当のリスナーでも同じ。
+    Windows では 127.0.0.1 と 0.0.0.0 が別アドレス扱いなので、サーバーと同じホストで確かめる）"""
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', 0))
@@ -91,11 +93,29 @@ def test_port_is_free_false_when_listener_exists() -> None:
     port = listener.getsockname()[1]
     try:
         assert port_is_free('127.0.0.1', port) is False
-        assert port_is_free('0.0.0.0', port) is False
     finally:
         listener.close()
 
 
+def test_port_is_free_after_server_closed_with_time_wait() -> None:
+    """サーバーが先に close して自分側に TIME_WAIT が残ったポートは空きと判定する（Ctrl+C 直後の再起動）"""
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    client = socket.create_connection(('127.0.0.1', port))
+    server_side, _ = listener.accept()
+    server_side.close()  # サーバーが先に FIN を送る → サーバー側が TIME_WAIT になる
+    client.recv(1)
+    client.close()
+    listener.close()
+    assert port_is_free('127.0.0.1', port) is True
+
+
+@pytest.mark.skipif(
+    os.name == 'nt', reason='Windows では空きポートへの接続が接続拒否でなくタイムアウトになる環境がある'
+)
 def test_running_instance_none_when_port_closed() -> None:
     """誰も待ち受けていないポート（接続拒否）は None（起動してよい）"""
     assert running_instance(f'http://127.0.0.1:{free_port()}', timeout=0.5) is None

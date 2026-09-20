@@ -30,21 +30,28 @@ from smart_ledger.config import load_config
 
 
 def port_is_free(host: str, port: int) -> bool:
-    """そのアドレスにソケットを bind できるか（誰も待ち受けていないか）を確かめる
+    """werkzeug のサーバーがそのアドレスに bind できるか（待ち受け中のサーバーが無いか）を確かめる
 
     接続を試す方法だと、環境によって空きポートへの接続が「接続拒否」ではなくタイムアウトになり
-    使用中と誤判定するため、bind の成否で判断する（SO_REUSEADDR を付けないので、
-    Windows でも既存のサーバーが bind 済みなら失敗する）
+    使用中と誤判定するため、bind の成否で判断する。ソケットオプションは werkzeug と同じ条件に揃える。
+    Windows 以外では SO_REUSEADDR を付ける（停止直後の TIME_WAIT が残っていても werkzeug は bind できるので
+    空きと判定する。待ち受け中のソケットがあれば SO_REUSEADDR 付きでも失敗する）。
+    Windows では付けない（付けると待ち受け中のサーバーがいても bind が成功して二重起動を検出できない。
+    Windows は TIME_WAIT だけなら素の bind が成功する）
 
     Args:
-        host: bind するアドレス（app.run に渡すものと同じ。'' や '0.0.0.0' も可）
+        host: bind するアドレス（app.run に渡すものと同じにする。Windows では 127.0.0.1 と 0.0.0.0 が
+            別アドレス扱いで互いに衝突しないため、ホストが違うと待ち受け中でも空きと判定される）
         port: ポート番号
 
     Returns:
-        True: 空いている / False: 何かが bind 済み（または bind 権限が無い）
+        True: 空いている / False: 何かが待ち受け中（または bind 権限が無い）
     """
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            if os.name != 'nt':
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
             sock.bind((host, port))
     except OSError:
         return False
