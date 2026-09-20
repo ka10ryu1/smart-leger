@@ -76,7 +76,7 @@ def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
         data={'category': 'その他', 'scope': 'always', 'memo': 'wallet'},
         follow_redirects=True,
     )
-    assert 'ルールを登録しました' in response.get_data(as_text=True)
+    assert 'ルール「SAMPLE WALLET」を登録しました' in response.get_data(as_text=True)
     assert 'SAMPLE WALLET' in client.get('/rules').get_data(as_text=True)
 
     response = client.post(
@@ -138,7 +138,7 @@ def test_external_back_is_replaced(client: FlaskClient, fixture_csv_bytes: bytes
 
 
 def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
-    """「今後この加盟店も」は同じ加盟店の他の明細にも反映され、件数が表示される
+    """「今後この加盟店も」はルールに一致する他の明細にも反映され、件数が表示される
 
     Args:
         client: テストクライアント
@@ -151,7 +151,7 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
     response = client.post(
         f'/transactions/{tx_id}/category', data={'category': '保険・税金', 'scope': 'always'}, follow_redirects=True
     )
-    assert '同じ加盟店の 1 件にも適用しました' in response.get_data(as_text=True)
+    assert '一致する 1 件にも適用しました' in response.get_data(as_text=True)
     response = client.post(
         f'/transactions/{tx_id}/allocations',
         data={'alloc_category': ['食費'], 'alloc_amount': ['abc'], 'alloc_memo': ['']},
@@ -244,3 +244,38 @@ def test_category_management_flow(client: FlaskClient) -> None:
     )
     assert 'カテゴリ「ペット用品」を削除しました' in body
     assert 'ペット用品' not in client.get('/categories').get_data(as_text=True)
+
+
+def test_rule_from_transaction_applies_across_billing_months(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """「今後この加盟店も」で登録したルールは、請求月だけ違う翌月の明細にも効く
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token}, follow_redirects=True)
+
+    # fixture の「テストデンリヨク 8ガツブン」を編集。編集画面には請求月を除いたパターンが提案される
+    tx_html = client.get('/transactions?q=テストデンリヨク').get_data(as_text=True)
+    tx_id = tx_html.split('/transactions/')[1].split('/edit')[0]
+    edit_html = client.get(f'/transactions/{tx_id}/edit').get_data(as_text=True)
+    assert 'name="rule_pattern" value="テストデンリヨク"' in edit_html
+
+    body = client.post(
+        f'/transactions/{tx_id}/category',
+        data={'category': '住居・光熱', 'scope': 'always', 'memo': '', 'rule_pattern': 'テストデンリヨク'},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert 'ルール「テストデンリヨク」を登録しました' in body
+
+    # 翌月分（9ガツブン）を含む別 CSV を取り込むと、Jev なしでもルールで分類される
+    next_month = (
+        fixture_csv_bytes
+        + '2026/09/10,テストデンリヨク　９ガツブン,"7,900",,"7,900",１回払,,"7,900",,   ,\r\n'.encode('cp932')
+    )
+    token = upload(client, next_month, 'next.csv').split('name="token" value="')[1].split('"')[0]
+    body = client.post('/import/commit', data={'token': token}, follow_redirects=True).get_data(as_text=True)
+    assert 'ルール一致 1 件' in body
+    listing = client.get('/transactions?q=9ガツブン').get_data(as_text=True)
+    assert '住居・光熱' in listing and 'ルール' in listing

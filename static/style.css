@@ -181,3 +181,5 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
   .category-edit { grid-column: 1 / -1; grid-template-columns: 1fr; }
   .category-meta { grid-column: 1 / -1; flex-direction: row; justify-content: space-between; }
 }
+
+.rule-pattern-input { flex: 1 1 200px; min-width: 0; font-size: 0.85rem; }

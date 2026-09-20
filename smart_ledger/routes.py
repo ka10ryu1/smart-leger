@@ -30,7 +30,7 @@ from .constants import (
     SOURCE_RULE,
     UNCLASSIFIED_LABEL,
 )
-from .models import LedgerData, Transaction, now_iso
+from .models import LedgerData, MerchantRule, Transaction, now_iso
 from .services.aggregation import (
     available_months,
     month_label,
@@ -53,7 +53,7 @@ from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
 from .services.importer import Importer, ImportResult
 from .services.jev_client import JevClient
-from .services.merchant_rules import delete_rule, match_rule, upsert_rule
+from .services.merchant_rules import delete_rule, match_rule, suggest_rule_pattern, upsert_rule
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +154,16 @@ def safe_back() -> str:
         return value
 
     return url_for('ledger.transactions')
+
+
+@bp.app_template_filter('rule_pattern')
+def rule_pattern_filter(merchant_normalized: str) -> str:
+    """加盟店名からルール用の既定パターン（請求月などを除いた加盟店キー）を作る
+
+    Args:
+        merchant_normalized: 正規化済みの加盟店名
+    """
+    return suggest_rule_pattern(merchant_normalized)
 
 
 @bp.app_template_filter('source_label')
@@ -338,7 +348,9 @@ def edit_transaction(tx_id: str) -> str:
     if tx is None:
         abort(404)
 
-    same_merchant = [t for t in data.transactions if t.merchant_normalized == tx.merchant_normalized and t.id != tx.id]
+    suggested = suggest_rule_pattern(tx.merchant_normalized)
+    probe = [MerchantRule(merchant_pattern=suggested, category=tx.category or '-')]
+    same_merchant = [t for t in data.transactions if t.id != tx.id and match_rule(probe, t.merchant_normalized)]
     return render_template(
         'edit.html',
         tx=tx,
@@ -346,6 +358,7 @@ def edit_transaction(tx_id: str) -> str:
         categories=data.category_names(),
         rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),
+        rule_pattern_suggestion=suggested,
         back=safe_back(),
     )
 
@@ -370,7 +383,9 @@ def save_and_redirect[T](
 
 @bp.route('/transactions/<tx_id>/category', methods=['POST'])
 def update_category(tx_id: str) -> WerkzeugResponse:
-    """カテゴリ変更（scope=once なら今回だけ、always ならルール登録して同じ加盟店にも反映）
+    """カテゴリ変更（scope=once なら今回だけ、always ならルール登録してパターンに一致する明細にも反映）
+
+    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う
 
     Args:
         tx_id: 明細 ID
@@ -378,9 +393,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     category = request.form.get('category', '').strip()
     scope = request.form.get('scope', 'once')
     memo = request.form.get('memo', '').strip()
+    rule_pattern = request.form.get('rule_pattern', '').strip()
     back = safe_back()
 
-    def mutate(data: LedgerData) -> int:
+    def mutate(data: LedgerData) -> tuple[int, str]:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
@@ -393,16 +409,16 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
         if scope != 'always':
-            return 0
+            return 0, ''
 
-        upsert_rule(data, tx.merchant_normalized, category)
+        rule = upsert_rule(data, rule_pattern or suggest_rule_pattern(tx.merchant_normalized), category)
         applied_others = 0
-        for other in data.transactions:  # 同じ加盟店で手動修正されていない明細にも反映する
+        for other in data.transactions:  # ルールに一致し、手動修正されていない明細にも反映する
             is_target = (
                 other.id != tx.id
-                and other.merchant_normalized == tx.merchant_normalized
                 and other.classification_source != SOURCE_MANUAL
                 and other.category != category
+                and match_rule([rule], other.merchant_normalized) is not None
             )
             if not is_target:
                 continue
@@ -412,18 +428,18 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             other.classification_source = SOURCE_RULE
             applied_others += 1
 
-        return applied_others
+        return applied_others, rule.merchant_pattern
 
     try:
-        applied_others = svc().repo.update(mutate)
+        applied_others, pattern = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
     if scope == 'always':
-        msg = f'カテゴリを「{category}」に変更し、この加盟店のルールを登録しました。'
+        msg = f'カテゴリを「{category}」に変更し、ルール「{pattern}」を登録しました。'
         if applied_others:
-            msg += f' 同じ加盟店の {applied_others} 件にも適用しました。'
+            msg += f' 一致する {applied_others} 件にも適用しました。'
     else:
         msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
 

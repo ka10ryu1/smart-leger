@@ -12,7 +12,7 @@ import pytest
 from smart_ledger.models import MerchantRule
 from smart_ledger.services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from smart_ledger.services.jev_client import JevClient, JevError, build_request_body, parse_choice_response
-from smart_ledger.services.merchant_rules import match_rule
+from smart_ledger.services.merchant_rules import match_rule, suggest_rule_pattern
 
 
 def make_client(handler: Callable[[httpx.Request], httpx.Response], retries: int = 0) -> JevClient:
@@ -337,3 +337,28 @@ def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
     """
     payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
     assert parse_choice_response(payload).confidence == pytest.approx(float(raw))
+
+
+def test_match_rule_ignores_billing_month_tokens() -> None:
+    """「6ガツブン ○○」のルールが「7ガツブン ○○」にも一致し、年月付きの電力会社も同一視される"""
+    rules = [
+        MerchantRule('6ガツブン エ-ユ-デンワリヨウリヨウ', '通信'),
+        MerchantRule('トウキヨウデンリヨク26ネン07ガツ', '住居・光熱'),
+    ]
+    assert match_rule(rules, '7ガツブン エ-ユ-デンワリヨウリヨウ').category == '通信'
+    assert match_rule(rules, 'トウキヨウデンリヨク26ネン08ガツ').category == '住居・光熱'
+    assert match_rule(rules, 'エ-ユ-デンワリヨウリヨウ').category == '通信'
+    assert match_rule(rules, 'カンサイデンリヨク26ネン08ガツ') is None
+
+
+def test_match_rule_partial_pattern_covers_varying_station_names() -> None:
+    """「オートチャージ」のような共通部分のパターンは駅名が違っても部分一致する"""
+    rules = [MerchantRule('オートチャージ', '交通')]
+    assert match_rule(rules, '北松戸駅 オートチャージ(リンク)').category == '交通'
+    assert match_rule(rules, '京成電鉄 新津田沼駅 オートチャージ(リンク)').category == '交通'
+
+
+def test_suggest_rule_pattern_uses_merchant_key() -> None:
+    """ルールの既定パターンは請求月を除いた加盟店キー"""
+    assert suggest_rule_pattern('7ガツブン エ-ユ-デンワリヨウリヨウ') == 'エ-ユ-デンワリヨウリヨウ'
+    assert suggest_rule_pattern('KYASH') == 'KYASH'
