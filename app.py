@@ -4,12 +4,14 @@ python app.py                 # http://localhost:5000
 python app.py --open-browser  # 起動後にブラウザを開く（start.ps1 が使用）
 
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
-（Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）
+（Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。
+別のプログラムがポートを使っている場合はメッセージを出して終了コード 1 で終わる
 """
 
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -22,12 +24,13 @@ from smart_ledger import create_app
 from smart_ledger.config import load_config
 
 
-def running_instance(url: str, timeout: float = 2.0) -> bool | None:
-    """そのポートで応答しているのが Smart Ledger かどうかを /health で確かめる
+def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger') -> bool | None:
+    """そのポートで応答しているのが Smart Ledger かどうかを /health の app 識別子で確かめる
 
     Args:
-        url: 'http://localhost:5000' のようなベース URL
+        url: 'http://127.0.0.1:5000' のようなベース URL
         timeout: 接続タイムアウト秒
+        app_id: /health が返す app の値（routes.health と一致させる）
 
     Returns:
         True: Smart Ledger が応答した / False: 別のプログラムが応答した / None: 何も応答しない（ポートは空き）
@@ -37,6 +40,8 @@ def running_instance(url: str, timeout: float = 2.0) -> bool | None:
             body = response.read().decode('utf-8', errors='replace')
     except urllib.error.HTTPError:
         return False  # 応答はあるが /health が無い → 別のプログラム
+    except http.client.HTTPException:
+        return False  # HTTP として解釈できない応答 → 別のプログラム
     except (urllib.error.URLError, OSError):
         return None  # 接続できない → ポートは空き
 
@@ -45,7 +50,7 @@ def running_instance(url: str, timeout: float = 2.0) -> bool | None:
     except ValueError:
         return False  # JSON でない応答 → 別のプログラム
 
-    return isinstance(payload, dict) and payload.get('status') == 'ok'
+    return isinstance(payload, dict) and payload.get('app') == app_id
 
 
 def main(browser_delay_seconds: float = 1.2) -> int:
@@ -69,7 +74,8 @@ def main(browser_delay_seconds: float = 1.2) -> int:
 
     # debug リローダーの子プロセスは親が同じポートを確認済みなので飛ばす
     if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
-        already = running_instance(f'http://{args.host}:{port}')
+        probe_host = '127.0.0.1' if args.host in ('', '0.0.0.0') else args.host  # 0.0.0.0 には接続できない
+        already = running_instance(f'http://{probe_host}:{port}')
         if already is True:
             print(f'Smart Ledger は既に起動しています: {url}  (このウィンドウは閉じて構いません)')
             if args.open_browser:

@@ -678,5 +678,5 @@ def delete_category_route() -> WerkzeugResponse:
 
 @bp.route('/health')
 def health() -> dict[str, str]:
-    """起動確認用エンドポイント（Flask が JSON にする）"""
-    return {'status': 'ok', 'time': now_iso()}
+    """起動確認用エンドポイント（Flask が JSON にする。app は app.py の二重起動判定が照合する識別子）"""
+    return {'status': 'ok', 'app': 'smart-ledger', 'time': now_iso()}

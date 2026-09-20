@@ -71,6 +71,8 @@ def test_pages_render(client: FlaskClient) -> None:
     for path in ('/', '/transactions', '/review', '/rules', '/categories', '/import', '/health'):
         assert client.get(path).status_code == 200
 
+    assert client.get('/health').get_json()['app'] == 'smart-ledger'  # app.py の二重起動判定が照合する
+
 
 def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
     """取込 → ダッシュボード → カテゴリ変更（ルール登録） → 内訳 → 再取込拒否 の一連のフロー

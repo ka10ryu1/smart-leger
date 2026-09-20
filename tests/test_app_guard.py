@@ -33,7 +33,7 @@ def http_server(request: pytest.FixtureRequest) -> Iterator[tuple[str, int]]:
     status, body = request.param
 
     class Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - http.server の規約
+        def do_GET(self) -> None:  # メソッド名は http.server の規約
             self.send_response(status)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
@@ -51,9 +51,11 @@ def http_server(request: pytest.FixtureRequest) -> Iterator[tuple[str, int]]:
     server.server_close()
 
 
-@pytest.mark.parametrize('http_server', [(200, json.dumps({'status': 'ok', 'time': 'x'}))], indirect=True)
+@pytest.mark.parametrize(
+    'http_server', [(200, json.dumps({'status': 'ok', 'app': 'smart-ledger', 'time': 'x'}))], indirect=True
+)
 def test_running_instance_detects_smart_ledger(http_server: tuple[str, int]) -> None:
-    """/health が status=ok を返せば起動済みと判定する
+    """/health が app=smart-ledger を返せば起動済みと判定する
 
     Args:
         http_server: ローカル HTTP サーバー
@@ -61,9 +63,13 @@ def test_running_instance_detects_smart_ledger(http_server: tuple[str, int]) -> 
     assert running_instance(http_server[0]) is True
 
 
-@pytest.mark.parametrize('http_server', [(404, 'not found'), (200, '<html>other app</html>')], indirect=True)
+@pytest.mark.parametrize(
+    'http_server',
+    [(404, 'not found'), (200, '<html>other app</html>'), (200, json.dumps({'status': 'ok'}))],
+    indirect=True,
+)
 def test_running_instance_detects_other_program(http_server: tuple[str, int]) -> None:
-    """404 や JSON でない応答は別プログラムと判定する
+    """404、JSON でない応答、app 識別子の無い JSON は別プログラムと判定する
 
     Args:
         http_server: ローカル HTTP サーバー
@@ -74,3 +80,23 @@ def test_running_instance_detects_other_program(http_server: tuple[str, int]) ->
 def test_running_instance_none_when_port_closed() -> None:
     """誰も待ち受けていないポートは None（起動してよい）"""
     assert running_instance(f'http://127.0.0.1:{free_port()}', timeout=0.5) is None
+
+
+def test_running_instance_false_for_non_http_listener() -> None:
+    """HTTP を話さないプログラムが待ち受けていても例外にならず、別プログラムと判定する"""
+    listener = socket.socket()
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+
+    def serve_garbage() -> None:
+        conn, _ = listener.accept()
+        conn.sendall(b'NOT HTTP AT ALL\r\n')
+        conn.close()
+
+    thread = threading.Thread(target=serve_garbage, daemon=True)
+    thread.start()
+    try:
+        assert running_instance(f'http://127.0.0.1:{port}', timeout=2.0) is False
+    finally:
+        listener.close()
