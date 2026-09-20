@@ -338,15 +338,18 @@ class LedgerData:
     imports: list[ImportRecord] = field(default_factory=list)
     allocations: list[Allocation] = field(default_factory=list)
 
+    def sorted_categories(self) -> list[Category]:
+        """sort_order 順（同順なら名前順）のカテゴリを返す"""
+        return sorted(self.categories, key=lambda c: (c.sort_order, c.category))
+
     def category_names(self) -> list[str]:
         """sort_order 順のカテゴリ名を返す（categories シートが空なら初期値）"""
-        cats = sorted(self.categories, key=lambda c: (c.sort_order, c.category))
-        names = [c.category for c in cats if c.category]
+        names = [c.category for c in self.sorted_categories() if c.category]
         return names or list(DEFAULT_CATEGORIES)
 
     def category_criteria(self) -> dict[str, str]:
         """Jev の choice に渡す カテゴリ名 → 説明 を sort_order 順で返す（説明が無ければ既定説明、それも無ければ名前）"""
-        described = {c.category: c.description for c in self.categories if c.category and c.description}
+        described = {c.category: c.description for c in self.categories}
         return {name: described.get(name) or CATEGORY_DESCRIPTIONS.get(name, name) for name in self.category_names()}
 
     def find_transaction(self, tx_id: str) -> Transaction | None:

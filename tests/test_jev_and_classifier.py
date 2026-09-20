@@ -74,7 +74,7 @@ def test_request_body_contains_only_minimal_fields(categories: list[str]) -> Non
     assert set(body['state'].keys()) == {'merchant', 'amount_jpy', 'usage_date'}
     question = body['questions']['category']
     assert question['type'] == 'choice'
-    assert set(question['criteria'].keys()) == set(categories)
+    assert question['criteria'] == {c: c for c in categories}  # 説明はそのまま criteria になる
 
 
 def test_client_posts_to_systemone_with_bearer(categories: list[str]) -> None:
@@ -111,50 +111,50 @@ def test_client_raises_on_401(categories: list[str]) -> None:
         client.choose_category('x', 1, date(2026, 1, 1), {c: c for c in categories})
 
 
-def test_classifier_high_confidence_auto_accepted(categories: list[str]) -> None:
+def test_classifier_high_confidence_auto_accepted(criteria: dict[str, str]) -> None:
     """confidence が閾値以上なら自動採用
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(JevClassifier(make_client(lambda r: choice_response('通信', 0.93))), 0.85)
-    result = pipeline.classify('サンプルツウシン', 4500, date(2026, 8, 28), categories, [])
+    result = pipeline.classify('サンプルツウシン', 4500, date(2026, 8, 28), criteria, [])
     assert result.source == 'jev'
     assert result.category == '通信'
     assert pipeline.is_auto_accepted(result) is True
 
 
-def test_classifier_low_confidence_needs_review(categories: list[str]) -> None:
+def test_classifier_low_confidence_needs_review(criteria: dict[str, str]) -> None:
     """confidence が閾値未満なら要確認
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(JevClassifier(make_client(lambda r: choice_response('食費', 0.62))), 0.85)
-    result = pipeline.classify('サンプルスーパー', 3240, date(2026, 8, 12), categories, [])
+    result = pipeline.classify('サンプルスーパー', 3240, date(2026, 8, 12), criteria, [])
     assert result.source == 'jev'
     assert result.confidence == pytest.approx(0.62)
     assert pipeline.is_auto_accepted(result) is False
 
 
-def test_threshold_boundary_inclusive(categories: list[str]) -> None:
+def test_threshold_boundary_inclusive(criteria: dict[str, str]) -> None:
     """閾値ちょうどは自動採用
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(JevClassifier(make_client(lambda r: choice_response('食費', 0.85))), 0.85)
-    assert pipeline.is_auto_accepted(pipeline.classify('x', 1, date(2026, 1, 1), categories, [])) is True
+    assert pipeline.is_auto_accepted(pipeline.classify('x', 1, date(2026, 1, 1), criteria, [])) is True
 
 
-def test_classifier_api_error_falls_back_safely(categories: list[str]) -> None:
+def test_classifier_api_error_falls_back_safely(criteria: dict[str, str]) -> None:
     """HTTP エラーは その他 / error / 要確認 で継続する
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(JevClassifier(make_client(lambda r: httpx.Response(500, text='boom'))), 0.85)
-    result = pipeline.classify('ナゾノミセ', 999, date(2026, 8, 1), categories, [])
+    result = pipeline.classify('ナゾノミセ', 999, date(2026, 8, 1), criteria, [])
     assert result.source == 'error'
     assert result.category == 'その他'
     assert result.confidence is None
@@ -162,38 +162,38 @@ def test_classifier_api_error_falls_back_safely(categories: list[str]) -> None:
     assert pipeline.is_auto_accepted(result) is False
 
 
-def test_classifier_network_error_falls_back_safely(categories: list[str]) -> None:
+def test_classifier_network_error_falls_back_safely(criteria: dict[str, str]) -> None:
     """通信エラーも source=error で継続する
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
 
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError('no network')
 
     pipeline = ClassificationPipeline(JevClassifier(make_client(handler)), threshold=0.85)
-    result = pipeline.classify('ナゾノミセ', 999, date(2026, 8, 1), categories, [])
+    result = pipeline.classify('ナゾノミセ', 999, date(2026, 8, 1), criteria, [])
     assert result.source == 'error'
 
 
-def test_unknown_choice_maps_to_fallback(categories: list[str]) -> None:
+def test_unknown_choice_maps_to_fallback(criteria: dict[str, str]) -> None:
     """カテゴリ一覧に無い choice は その他 / source=error にして要確認に回す
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     result = JevClassifier(make_client(lambda r: choice_response('宇宙', 0.99))).classify(
-        'x', 1, date(2026, 1, 1), categories
+        'x', 1, date(2026, 1, 1), criteria
     )
     assert result.category == 'その他' and result.source == 'error' and result.confidence is None
 
 
-def test_rule_takes_precedence_over_jev(categories: list[str]) -> None:
+def test_rule_takes_precedence_over_jev(criteria: dict[str, str]) -> None:
     """ルールに一致すれば Jev を呼ばない
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     calls = {'n': 0}
 
@@ -202,18 +202,18 @@ def test_rule_takes_precedence_over_jev(categories: list[str]) -> None:
         return choice_response('食費', 0.99)
 
     pipeline = ClassificationPipeline(JevClassifier(make_client(handler)), threshold=0.85)
-    result = pipeline.classify('KYASH', 10000, date(2026, 8, 15), categories, [MerchantRule('KYASH', 'その他')])
+    result = pipeline.classify('KYASH', 10000, date(2026, 8, 15), criteria, [MerchantRule('KYASH', 'その他')])
     assert result.source == 'rule'
     assert result.category == 'その他'
     assert result.confidence is None
     assert calls['n'] == 0
 
 
-def test_same_merchant_queried_once_per_import(categories: list[str]) -> None:
+def test_same_merchant_queried_once_per_import(criteria: dict[str, str]) -> None:
     """同一取込内の同じ加盟店は 1 回だけ問い合わせる
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     calls = {'n': 0}
 
@@ -223,19 +223,19 @@ def test_same_merchant_queried_once_per_import(categories: list[str]) -> None:
 
     pipeline = ClassificationPipeline(JevClassifier(make_client(handler)), threshold=0.85)
     for _ in range(3):
-        pipeline.classify('テスト駅 オートチャージ', 10000, date(2026, 8, 20), categories, [])
+        pipeline.classify('テスト駅 オートチャージ', 10000, date(2026, 8, 20), criteria, [])
 
     assert calls['n'] == 1
 
 
-def test_null_classifier_when_no_api_key(categories: list[str]) -> None:
+def test_null_classifier_when_no_api_key(criteria: dict[str, str]) -> None:
     """API キー無しの代替分類器は その他 / error を返す
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(NullClassifier('no key'), threshold=0.85)
-    result = pipeline.classify('x', 1, date(2026, 1, 1), categories, [])
+    result = pipeline.classify('x', 1, date(2026, 1, 1), criteria, [])
     assert result.source == 'error' and result.category == 'その他'
 
 
@@ -266,11 +266,11 @@ def test_match_rule_exact_partial_and_case() -> None:
     assert match_rule(rules, 'セブンイレブン') is None
 
 
-def test_retry_on_429_then_success(categories: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retry_on_429_then_success(criteria: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> None:
     """retry_statuses のレスポンスは待ってから再試行し、成功すれば結果を返す（sleep は差し替える）
 
     Args:
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
         monkeypatch: time.sleep を無効化する
     """
     from smart_ledger.services import jev_client
@@ -283,7 +283,7 @@ def test_retry_on_429_then_success(categories: list[str], monkeypatch: pytest.Mo
         status = next(statuses)
         return choice_response('通信', 0.9) if status == 200 else httpx.Response(status, text='rate limited')
 
-    result = JevClassifier(make_client(handler, retries=1)).classify('x', 1, date(2026, 1, 1), categories)
+    result = JevClassifier(make_client(handler, retries=1)).classify('x', 1, date(2026, 1, 1), criteria)
     assert result.category == '通信' and result.source == 'jev'
     assert sleeps == [1.0]
 
@@ -317,17 +317,3 @@ def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
     """
     payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
     assert parse_choice_response(payload).confidence == pytest.approx(float(raw))
-
-
-def test_dict_categories_are_sent_as_criteria() -> None:
-    """categories に 名前 → 説明 の dict を渡すと、その説明がそのまま Jev の criteria になる"""
-    seen: dict[str, object] = {}
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen['criteria'] = json.loads(request.content)['questions']['category']['criteria']
-        return choice_response('ペット', 0.9)
-
-    criteria = {'ペット': 'フード・動物病院', 'その他': '上記以外'}
-    result = JevClassifier(make_client(handler)).classify('PETSHOP', 3000, date(2026, 8, 1), criteria)
-    assert seen['criteria'] == criteria
-    assert result.category == 'ペット'

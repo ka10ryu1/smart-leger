@@ -185,7 +185,7 @@ class ExcelRepository:
         sheet_rows: dict[str, list[list[Any]]] = {
             'transactions': [t.to_row() for t in data.transactions],
             'merchant_rules': [r.to_row() for r in data.merchant_rules],
-            'categories': [c.to_row() for c in sorted(data.categories, key=lambda c: c.sort_order)],
+            'categories': [c.to_row() for c in data.sorted_categories()],
             'imports': [i.to_row() for i in data.imports],
             'allocations': [a.to_row() for a in data.allocations],
         }
@@ -259,20 +259,20 @@ class ExcelRepository:
         self.last_dropbox_result = self.dropbox.copy(self.excel_path)
         return self.excel_path
 
-    def update(self, mutator: Callable[[LedgerData], Any]) -> LedgerData:
+    def update[T](self, mutator: Callable[[LedgerData], T]) -> T:
         """読み込み → 変更 → 保存をロック内でまとめて行う（並行リクエストによる上書き消失を防ぐ）
 
         Args:
             mutator: LedgerData を書き換える関数
 
         Returns:
-            保存後の LedgerData
+            mutator の戻り値（保存後に返す）
         """
         with self.lock:
             data = self.load_unlocked()
-            mutator(data)
+            result = mutator(data)
             self.save_unlocked(data)
-            return data
+            return result
 
     # --------------------------------------------------------------- helpers
     def verify(self, path: Path) -> None:

@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from smart_ledger.config import Config
-from smart_ledger.constants import DEFAULT_CATEGORIES
+from smart_ledger.constants import CATEGORY_DESCRIPTIONS, DEFAULT_CATEGORIES
 from smart_ledger.services.backup import DropboxBackup
 from smart_ledger.services.excel_repository import ExcelRepository
 
@@ -32,6 +32,12 @@ def fixture_csv_bytes(fixtures_dir: Path) -> bytes:
 def categories() -> list[str]:
     """初期カテゴリ 10 件"""
     return list(DEFAULT_CATEGORIES)
+
+
+@pytest.fixture
+def criteria() -> dict[str, str]:
+    """初期カテゴリの 名前 → 既定説明（Jev の criteria）"""
+    return dict(CATEGORY_DESCRIPTIONS)
 
 
 @pytest.fixture

@@ -6,6 +6,7 @@ from datetime import date
 
 import pytest
 
+from smart_ledger.constants import CATEGORY_DESCRIPTIONS
 from smart_ledger.models import Allocation, Category, LedgerData, MerchantRule, Transaction
 from smart_ledger.services.categories import (
     CategoryError,
@@ -14,28 +15,15 @@ from smart_ledger.services.categories import (
     delete_category,
     edit_category,
     move_category,
-    sorted_categories,
 )
+from smart_ledger.services.excel_repository import default_ledger
 
 
 @pytest.fixture
-def data(categories: list[str]) -> LedgerData:
-    """初期カテゴリと、食費を使う明細・ルール・内訳を持つ LedgerData
-
-    Args:
-        categories: 初期カテゴリ
-    """
-    ledger = LedgerData(categories=[Category(c, i + 1) for i, c in enumerate(categories)])
-    ledger.transactions.append(
-        Transaction(
-            id='tx_1',
-            usage_date=date(2026, 8, 1),
-            merchant_raw='A',
-            merchant_normalized='A',
-            amount=100,
-            category='食費',
-        )
-    )
+def data() -> LedgerData:
+    """初期カテゴリと、食費を使う明細・ルール・内訳を持つ LedgerData"""
+    ledger = default_ledger()
+    ledger.transactions.append(Transaction('tx_1', date(2026, 8, 1), 'A', 'A', 100, category='食費'))
     ledger.merchant_rules.append(MerchantRule('A', '食費'))
     ledger.allocations.append(Allocation('tx_1', '食費', 100))
     return ledger
@@ -67,6 +55,10 @@ def test_add_category_rejects_empty_and_duplicate(data: LedgerData) -> None:
     with pytest.raises(CategoryError):
         add_category(data, '食費')
 
+    data.categories.append(Category('娯楽（サブスク）', 11))
+    with pytest.raises(CategoryError):
+        add_category(data, '娯楽(サブスク)')  # シート上の未正規化名と正規化後に一致
+
 
 def test_edit_category_renames_and_propagates(data: LedgerData) -> None:
     """名称変更は明細・ルール・内訳にも伝播し、説明も更新される
@@ -82,15 +74,26 @@ def test_edit_category_renames_and_propagates(data: LedgerData) -> None:
     assert '食費' not in data.category_names()
     assert data.category_criteria()['食料品'] == 'スーパーでの買い物'
 
+    assert edit_category(data, '通信', '携帯', '') == 0
+    assert data.category_criteria()['携帯'] == CATEGORY_DESCRIPTIONS['通信']  # 説明が空なら旧名の既定説明を引き継ぐ
+
 
 def test_edit_category_description_only(data: LedgerData) -> None:
-    """同じ名前なら説明だけ更新し、伝播件数は 0
+    """正規化後に同じ名前なら説明だけ更新し、伝播件数は 0（シート上の未正規化名・フォールバックも同様）
 
     Args:
         data: テスト用データ
     """
     assert edit_category(data, '通信', '通信', '携帯・回線') == 0
     assert data.category_criteria()['通信'] == '携帯・回線'
+
+    assert edit_category(data, 'その他', 'その他', '分類不能') == 0
+    assert data.category_criteria()['その他'] == '分類不能'
+
+    data.categories.append(Category('娯楽（サブスク）', 11))
+    data.transactions[0].category = '娯楽（サブスク）'
+    assert edit_category(data, '娯楽（サブスク）', '娯楽（サブスク）', 'x') == 0
+    assert data.transactions[0].category == '娯楽（サブスク）'  # 正規化差分だけで明細を書き換えない
 
 
 def test_edit_category_guards(data: LedgerData) -> None:
@@ -112,20 +115,24 @@ def test_edit_category_guards(data: LedgerData) -> None:
 
 
 def test_move_category_swaps_neighbors_and_stops_at_edges(data: LedgerData) -> None:
-    """上下移動は隣と入れ替わり、端では False を返す
+    """上下移動は隣と入れ替わり、端では CategoryError
 
     Args:
         data: テスト用データ
     """
-    assert move_category(data, '外食', -1) is True
+    move_category(data, '外食', -1)
     assert data.category_names()[:2] == ['外食', '食費']
-    assert move_category(data, '外食', -1) is False
-    assert move_category(data, 'その他', 1) is False
-    assert [c.sort_order for c in sorted_categories(data)] == list(range(1, 11))
+    with pytest.raises(CategoryError, match='端'):
+        move_category(data, '外食', -1)
+
+    with pytest.raises(CategoryError, match='端'):
+        move_category(data, 'その他', 1)
+
+    assert [c.sort_order for c in data.sorted_categories()] == list(range(1, 11))
 
 
-def test_delete_category_guards_and_renumbers(data: LedgerData) -> None:
-    """使用中とフォールバックは削除できず、未使用は削除されて連番になる
+def test_delete_category_guards(data: LedgerData) -> None:
+    """使用中とフォールバックは削除できず、未使用は削除されて順序が保たれる
 
     Args:
         data: テスト用データ
@@ -137,16 +144,17 @@ def test_delete_category_guards_and_renumbers(data: LedgerData) -> None:
         delete_category(data, 'その他')
 
     delete_category(data, '外食')
-    assert '外食' not in data.category_names()
-    assert [c.sort_order for c in sorted_categories(data)] == list(range(1, 10))
+    assert data.category_names()[:2] == ['食費', '日用品・買い物']
 
 
 def test_category_usage_counts(data: LedgerData) -> None:
-    """使用件数は明細・ルール・内訳ごとに数えられる
+    """使用件数は明細・ルール・内訳ごとに数えられ、シートに無いカテゴリ（未分類）も数える
 
     Args:
         data: テスト用データ
     """
+    data.transactions.append(Transaction('tx_2', date(2026, 8, 2), 'B', 'B', 200, category=''))
     usage = category_usage(data)
-    assert (usage['食費'].transactions, usage['食費'].rules, usage['食費'].allocations) == (1, 1, 1)
-    assert usage['通信'].total == 0
+    assert (usage['食費']['transactions'], usage['食費']['rules'], usage['食費']['allocations']) == (1, 1, 1)
+    assert usage['通信'].total() == 0
+    assert usage['']['transactions'] == 1

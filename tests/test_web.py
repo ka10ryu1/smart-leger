@@ -205,6 +205,11 @@ def test_category_management_flow(client: FlaskClient) -> None:
     ).get_data(as_text=True)
     assert '既に端にあるため並び順は変わりません' in body
 
+    body = client.post(
+        '/categories/move', data={'category': 'その他', 'direction': 'sideways'}, follow_redirects=True
+    ).get_data(as_text=True)
+    assert '移動方向が不正です' in body
+
     body = client.post('/categories/delete', data={'category': 'ペット用品'}, follow_redirects=True).get_data(
         as_text=True
     )
