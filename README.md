@@ -1,2 +1,338 @@
-# smart-leger
-クレジットカード利用履歴をAIで自動分類し、家計の支出を管理・分析する家計簿アプリ。初期検証ではJevを利用。
+# Smart Ledger
+
+クレジットカード会社の Web サイトからダウンロードした **利用明細 CSV** を取り込み、
+明細を正規化・重複除外し、加盟店ルールと TypeSafe AI の **Jev** で 10 カテゴリに分類、
+**Excel(`data/household.xlsx`)を正本として永続化** し、ブラウザから家計簿として閲覧・修正できる
+個人用 Web アプリです。
+
+- Windows 上で直接動作(WSL / Docker / SQL / クラウド DB 不要)
+- Python 3.12+ / Flask / openpyxl / httpx
+- スマートフォン幅でも見やすいレスポンシブ UI
+- Dropbox デスクトップアプリの同期フォルダへ自動コピー(閲覧・バックアップ用)
+
+## 主な機能
+
+| 画面 | 内容 |
+| --- | --- |
+| ダッシュボード | 対象年月の総支出・前月比・カテゴリ別支出と割合・直近 6 か月推移・最近の明細。月切替は `← 前月 / 翌月 →` |
+| 明細一覧 | 利用日・加盟店・金額・カテゴリ・分類元(rule / jev / manual / error)・confidence。月・カテゴリ・分類元・加盟店名で絞り込み |
+| CSV 取込 | CSV 選択 → 解析 → プレビュー(新規件数 / 重複件数) → 「取り込む」で新規明細だけ分類して Excel 保存 |
+| 要確認 | confidence < 0.85、Jev エラー、未分類の明細。その場でカテゴリ確定 |
+| 明細編集 | カテゴリ変更(今回だけ / 今後この加盟店も)、メモ、**内訳分割(allocations)** |
+| ルール | 加盟店ルール(merchant_rules)の一覧・追加・削除 |
+
+### 分類の流れ
+
+```
+新規明細 → 加盟店名正規化(NFKC・空白整理)
+        → merchant_rules を検索 ── 一致 → category(source=rule)
+        → 不一致 → Jev(choice)で 10 カテゴリから 1 つ選択 → category + confidence(source=jev)
+              confidence >= 0.85 → 自動採用
+              confidence <  0.85 → 「要確認」
+        → Jev エラー / API キー未設定 → category=その他, source=error, 「要確認」(取込は継続)
+```
+
+Jev は「未知の加盟店に初期カテゴリを付ける交換可能な分類器」として
+[`smart_ledger/services/classifier.py`](smart_ledger/services/classifier.py) の `Classifier` Protocol の実装の 1 つになっています。
+アプリの中心は Transaction / Category / MerchantRule / Allocation です。
+
+## Windows でのセットアップ
+
+### 前提
+
+- Windows 10 / 11
+- [Python 3.12 以上](https://www.python.org/downloads/windows/)(インストール時に **Add python.exe to PATH** にチェック)
+- PowerShell(Windows 標準の Windows PowerShell 5.1 または PowerShell 7)
+
+### 1. リポジトリを取得
+
+```powershell
+git clone <このリポジトリのURL> smart-ledger
+cd smart-ledger
+```
+
+### 2. setup.ps1 を実行
+
+```powershell
+.\setup.ps1
+```
+
+`setup.ps1` は次を行います。
+
+1. Python 3.12+ を検出(`py -3.12` → `py -3.13` → `py -3` → `python` → `python3` の順)
+2. 仮想環境 `.venv` を作成
+3. `pip install -r requirements.txt`
+4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
+5. `.env` が無ければ `.env.example` からコピー
+
+実行ポリシーで止まる場合は次のように実行してください。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+
+### 3. .env を設定
+
+`.env` をテキストエディタで開き、必要な値を設定します(`.env` は Git 管理外です)。
+
+```ini
+# TypeSafe AI (Jev) の API キー(必須: 自動分類に使用)
+TYPESAFE_API_KEY=ts-xxxxxxxxxxxxxxxx
+
+# Jev モデル名(通常は変更不要)
+TYPESAFE_MODEL=jev-latest
+
+# 自動採用する confidence の閾値
+CLASSIFICATION_CONFIDENCE_THRESHOLD=0.85
+
+# Dropbox 同期フォルダ(任意。未設定ならバックアップをスキップ)
+DROPBOX_SMART_LEDGER_PATH=C:\Users\xxxxx\Dropbox\SmartLedger
+
+# ポート(任意。省略時 5000)
+SMART_LEDGER_PORT=5000
+```
+
+#### TypeSafe API Key の取得
+
+1. <https://typesafe.ai> でアカウントを作成し、<https://console.typesafe.ai> で API キーを発行
+2. `.env` の `TYPESAFE_API_KEY=` に貼り付け
+3. アプリを再起動
+
+API キーが未設定でもアプリは動作します。その場合、ルールに一致しない加盟店は
+「その他 / source=error / 要確認」として取り込まれるので、要確認画面から手動で分類できます。
+
+Jev に送信するのは **加盟店名(正規化後)・金額・利用日のみ** です。
+氏名・会員番号・カード番号は送信しません(そもそも CSV から読み取りません)。
+
+### 4. start.ps1 で起動
+
+```powershell
+.\start.ps1
+```
+
+- `.venv` の Python で Flask を起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます
+- 終了は PowerShell で `Ctrl+C`
+
+手動で起動する場合:
+
+```powershell
+.\.venv\Scripts\python.exe app.py --open-browser
+```
+
+## CSV 取込方法
+
+1. カード会社の会員サイトから利用明細 CSV(例: `ご利用明細_202610.csv`)をダウンロード
+2. ブラウザで **取込** を開き、CSV を選択して「解析してプレビュー」
+3. プレビューで利用日・加盟店・金額と **新規 / 重複** 件数を確認
+4. 「N 件を取り込む」を押すと、新規明細だけを分類して Excel に保存
+   (Jev への問い合わせのため、加盟店数に応じて数秒〜数十秒かかります)
+5. 要確認がある場合は要確認画面へ移動するので、カテゴリを確定
+
+### 対応 CSV 形式
+
+- 先頭にメタ情報(会員番号・対象カード・お支払日・今回お支払金額)があり、
+  その後に **`ご利用年月日` から始まる明細ヘッダー行** が続く形式
+- ヘッダー行は固定行数ではなく `ご利用年月日` で検出します
+- 文字コードは UTF-8(BOM 有無どちらも) → CP932 の順に自動判定
+- ヘッダー直後のカード保有者行(`****-****-****-1234 氏名`)や合計行など、利用日として読めない行は無視
+- 取得項目: 利用日(`ご利用年月日`)、加盟店(`ご利用箇所`)、金額(`ご利用額`。空で `払戻額` があれば負の金額)、カード名(メタ情報の `対象カード`)
+- **月次集計は請求月ではなく各明細の利用日(usage_date)基準** です
+
+### 重複取込防止
+
+- CSV ファイル全体の SHA-256 を `imports.file_hash` と照合し、同一ファイルなら
+  「このCSVはすでに取り込み済みです」と表示して取込を拒否
+- 明細単位では `row_key = SHA-256(利用日 | 正規化加盟店名 | 金額 | 同ファイル内での同組み合わせの出現回数)` で照合
+  - 照合は同じカード名(`card`)の明細どうしで行うため、別カードの同一明細(家族カード等)は重複扱いになりません
+  - 同日・同加盟店・同金額の正当な複数決済は「出現回数」で区別されるため、両方とも取り込まれます
+  - 別ファイル(例: 確定前と確定後の CSV)で重なる明細だけをスキップできます
+
+## Excel 保存場所とデータ構造
+
+正本は **`data/household.xlsx`** です(`SMART_LEDGER_EXCEL_PATH` で変更可)。
+
+| シート | 列 |
+| --- | --- |
+| `transactions` | `id`, `usage_date`, `merchant_raw`, `merchant_normalized`, `amount`, `category`, `confidence`, `classification_source`, `card`, `import_id`, `imported_at`, `row_key`, `memo` |
+| `merchant_rules` | `merchant_pattern`, `category`, `created_at` |
+| `categories` | `category`, `sort_order` |
+| `imports` | `import_id`, `filename`, `file_hash`, `imported_at`, `card`, `row_count` |
+| `allocations` | `transaction_id`, `category`, `amount`, `memo` |
+
+- `merchant_raw` は CSV の元の表記をそのまま保持し、`merchant_normalized` は NFKC 正規化・前後空白除去・連続空白整理後の値
+- `classification_source` は `rule` / `jev` / `manual` / `error`。`confidence` は `jev` のときのみ値が入ります
+- `categories` シートの行を増やせばカテゴリを追加できます(MVP 初期値は 10 カテゴリ)
+
+### カテゴリ(初期値)
+
+食費 / 外食 / 日用品・買い物 / 住居・光熱 / 通信 / 交通 / 保険・税金 / 娯楽・サブスク / 衣服・美容 / その他
+
+### 加盟店ルール
+
+- 明細編集または要確認画面で **「今後この加盟店も同じカテゴリ」** を選んだときだけ `merchant_rules` に追加されます
+  (「今回だけ」ではルール化しません。Jev の結果を勝手にルール化することもありません)
+- ルール登録時、同じ加盟店で手動修正されていない明細にも同じカテゴリを適用します
+- 一致は完全一致優先、次に部分一致(パターンが加盟店名に含まれる。最長パターン優先、大文字小文字は無視)
+
+### 内訳分割(allocations)と集計ルール
+
+KYASH のようなまとめ決済を複数カテゴリに分けられます。
+
+```
+KYASH 10,000 円
+  食費            3,500
+  日用品・買い物   4,000
+  外食            2,500
+  ------------------------
+  合計           10,000  ← transactions.amount と一致しないと保存不可
+```
+
+- 内訳が無い明細 → `transactions.category` でカテゴリ集計
+- 内訳がある明細 → **月間総支出では `transactions.amount` を 1 回だけ**、**カテゴリ別集計では `allocations` を使用**
+- 二重計上は発生しません(pytest で検証)
+
+### 保存の安全性
+
+1. 一時ファイル(`data/~household.<pid>.tmp.xlsx`)へ書き出し
+2. openpyxl で再オープンして検証
+3. 既存の正本を `data/backup/household_YYYYMMDD_HHMMSS.xlsx` に世代バックアップ(既定 20 世代、`BACKUP_GENERATIONS` で変更)
+4. `os.replace` で正本を置換
+5. Dropbox 設定時は latest / backup へコピー
+
+Excel が他のアプリで開かれてロックされている場合は、正本を変更せずエラー画面で通知します。
+
+## Dropbox バックアップ設定
+
+Dropbox API は使いません。Windows の Dropbox デスクトップアプリが同期しているローカルフォルダにコピーします。
+
+```ini
+DROPBOX_SMART_LEDGER_PATH=C:\Users\xxxxx\Dropbox\SmartLedger
+```
+
+保存成功のたびに次へコピーされます。
+
+```
+Dropbox/SmartLedger/
+├─ latest/
+│  └─ household.xlsx                  ← iPhone の Dropbox / Excel アプリから閲覧
+└─ backup/
+   └─ household_YYYYMMDD_HHMMSS.xlsx
+```
+
+- 未設定(空)の場合はスキップします
+- Dropbox 側の `backup/` もローカルと同じ世代数(既定 20、`BACKUP_GENERATIONS`)だけ残し、古いものは削除します
+- Dropbox 側は閲覧・バックアップ用途です。Dropbox 側での編集は Smart Ledger に反映されません(正本は常に `data/household.xlsx`)
+
+## ディレクトリ構成
+
+```
+smart-ledger/
+├─ app.py                     # 起動スクリプト(--open-browser でブラウザを開く)
+├─ requirements.txt
+├─ setup.ps1 / start.ps1      # Windows PowerShell 用セットアップ・起動
+├─ .env.example               # 設定テンプレート(.env は Git 管理外)
+├─ smart_ledger/
+│  ├─ __init__.py             # create_app
+│  ├─ config.py               # .env / 環境変数の読み込み
+│  ├─ models.py               # Transaction / MerchantRule / Category / ImportRecord / Allocation
+│  ├─ routes.py               # Flask ルーティング(画面)
+│  ├─ logging_setup.py        # ログ設定(カード番号・APIキーのマスク)
+│  ├─ services/
+│  │  ├─ csv_parser.py        # ヘッダー検出・文字コード判定・row_key
+│  │  ├─ normalize.py         # 加盟店名正規化
+│  │  ├─ merchant_rules.py    # ルール検索・登録
+│  │  ├─ jev_client.py        # TypeSafe Jev API クライアント(httpx)
+│  │  ├─ classifier.py        # 分類パイプライン(rule → Jev → 閾値)
+│  │  ├─ importer.py          # プレビュー / 確定
+│  │  ├─ aggregation.py       # 月次・カテゴリ集計(usage_date 基準)
+│  │  ├─ allocations.py       # 内訳の検証
+│  │  ├─ excel_repository.py  # household.xlsx の読み書き(atomic 保存)
+│  │  └─ backup.py            # 世代バックアップ・Dropbox コピー
+│  └─ templates/              # Jinja2 テンプレート
+├─ static/                    # CSS / JS
+├─ data/                      # household.xlsx, backup/, staging/(Git 管理外)
+├─ logs/                      # smart_ledger.log(Git 管理外)
+└─ tests/                     # pytest(fixtures/ に架空データの CSV)
+```
+
+## テスト方法
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+通常のテストは Jev API を実際には呼ばず、`httpx.MockTransport` でモックしています。主なテスト項目:
+
+- CSV ヘッダー行検出、CP932 / UTF-8 BOM 読込、払戻額の扱い
+- merchant_normalized(NFKC・空白整理)
+- ファイルハッシュ / row_key による重複検出(同日同加盟店同金額の複数決済を保持)
+- 月次集計が利用日基準であること
+- merchant rule の適用(完全一致・部分一致・Jev より優先)
+- Jev レスポンス解析、confidence 閾値、API エラー時のフォールバック
+- allocations の二重計上防止・合計チェック
+- Excel の read / write、世代バックアップ、旧形式ファイルの互換
+- Dropbox パス未設定時のスキップ・設定時のコピー
+- Web 画面の一連のフロー(取込 → ダッシュボード → 編集 → ルール → 内訳)
+- Jev が不明なカテゴリを返したときの要確認化、429 の再試行、確定再試行時のキャッシュ再利用
+- Excel ロック時に正本が変わらないこと、`=` 始まりの文字列が数式にならないこと、不完全行の読み飛ばし
+- 別カードの同一明細を重複扱いしないこと、外部 URL への戻り先と別サイトからの POST の拒否
+- ログのカード番号 / Bearer マスク、Excel セルの日付表現(`2026/8/1` 等)、空行挿入ツール
+
+### 実 API を使うライブテスト
+
+`tests/test_jev_live.py` は TypeSafe Jev の実 API を呼びます(2 回、架空の加盟店名・金額・利用日のみ送信)。
+`.env` または環境変数に `TYPESAFE_API_KEY` があるときだけ実行され、無ければ自動でスキップされます。
+
+```powershell
+# ライブテストだけ実行
+.\.venv\Scripts\python.exe -m pytest -m live -rs
+
+# ライブテストを除外して実行(オフライン・CI 向け)
+.\.venv\Scripts\python.exe -m pytest -m "not live"
+# または
+$env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
+```
+
+## 開発ルール（CLAUDE.md）
+
+コードスタイルは [CLAUDE.md](CLAUDE.md) に従います。変更後は次を実行してください。
+
+```powershell
+# 未使用 import などの確認と整形（シングルクォート、行長 120）
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format .
+
+# ブロック終了後（インデントが戻る箇所）の空行を機械的に挿入
+.\.venv\Scripts\python.exe tools\insert_block_blank_lines.py smart_ledger tests tools app.py
+```
+
+- モジュール横断の定数は `smart_ledger/constants.py` に集約し、1 モジュール内で完結する値は関数の既定引数にしています
+- ログメッセージは英語小文字の `label: key=value` 形式です（UI 表示や例外メッセージは日本語）
+
+## ログ
+
+`logs/smart_ledger.log`(ローテーション 2MB × 5)。API キー・カード番号・会員番号は出力しません
+(CSV のメタ行から読むのは対象カード名のみで会員番号は読み取らず、万一の数字列もフィルタでマスクします)。
+
+## セキュリティ / Git
+
+次のものは `.gitignore` で除外されており、コミットされません。
+
+- `.env`(API キー)
+- `.venv/`
+- `data/`(household.xlsx、バックアップ、staging)
+- `logs/`
+- `*.xlsx`、`*.csv`(実際のカード明細)
+
+例外として `tests/fixtures/` 配下の **架空データ** の CSV だけ Git 管理しています。
+
+別サイトのページからの POST(CSRF)は、`Origin` / `Referer` のホストがアプリ自身と一致しない場合に 403 で拒否します。
+
+## MVP でやらないこと
+
+SQL / SQLite、Docker、WSL 前提、n8n、ユーザー認証、外部公開、Dropbox API、Dropbox → Smart Ledger の逆同期、
+iOS ネイティブアプリ、銀行・カード API 連携、スクレイピング、複雑な予算管理、機械学習モデルの自前学習。
+
+## ライセンス
+
+[LICENSE](LICENSE) を参照してください。

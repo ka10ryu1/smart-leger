@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="card center">
+  <h1>{{ title }}</h1>
+  <p class="error-text">{{ message }}</p>
+  <p>正本の Excel は変更されていません。問題を解消してから、もう一度操作してください。</p>
+  <a class="btn" href="javascript:history.back()">← 戻る</a>
+  <a class="btn" href="{{ url_for('ledger.dashboard') }}">ホーム</a>
+</section>
+{% endblock %}

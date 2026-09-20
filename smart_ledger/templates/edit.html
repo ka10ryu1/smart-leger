@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}明細編集{% endblock %}
+{% block content %}
+<p><a class="back" href="{{ back }}">← 戻る</a></p>
+<h1>明細編集</h1>
+
+<section class="card">
+  <dl class="tx-detail">
+    <dt>利用日</dt><dd>{{ tx.usage_date.strftime('%Y/%m/%d') }}</dd>
+    <dt>加盟店</dt><dd>{{ tx.merchant_normalized }}<br><small class="muted">元データ: {{ tx.merchant_raw }}</small></dd>
+    <dt>金額</dt><dd class="big">{{ tx.amount|yen }} 円</dd>
+    <dt>カード</dt><dd>{{ tx.card or '-' }}</dd>
+    <dt>現在のカテゴリ</dt><dd><span class="badge cat">{{ tx.category or '未分類' }}</span> <span class="badge src src-{{ tx.classification_source }}">{{ tx.classification_source|source_label }}{% if tx.confidence is not none %} {{ tx.confidence|conf }}{% endif %}</span></dd>
+    {% if rule %}<dt>適用ルール</dt><dd>「{{ rule.merchant_pattern }}」→ {{ rule.category }}</dd>{% endif %}
+  </dl>
+</section>
+
+<section class="card">
+  <h2>カテゴリ変更</h2>
+  <form method="post" action="{{ url_for('ledger.update_category', tx_id=tx.id) }}" class="stack">
+    <input type="hidden" name="back" value="{{ back }}">
+    <label>カテゴリ
+      <select name="category" required>
+        {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == tx.category }}>{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="radio-group">
+      <label class="radio"><input type="radio" name="scope" value="once" checked> 今回だけ変更</label>
+      <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店は同じカテゴリ(ルール登録){% if same_merchant_count %} <small class="muted">/ 同じ加盟店の明細 {{ same_merchant_count }} 件にも適用</small>{% endif %}</label>
+    </div>
+    <label>メモ
+      <input type="text" name="memo" value="{{ tx.memo }}" placeholder="任意">
+    </label>
+    <button class="btn btn-primary" type="submit">保存</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>内訳分割(allocations)</h2>
+  <p class="hint">KYASH などまとめて決済した明細を複数カテゴリに分けられます。内訳の合計は明細金額 <strong>{{ tx.amount|yen }} 円</strong> と一致させてください。カテゴリ別集計では内訳を、総支出では明細金額を 1 回だけ使います。</p>
+  <form method="post" action="{{ url_for('ledger.update_allocations', tx_id=tx.id) }}" id="alloc-form" data-total="{{ tx.amount }}">
+    <input type="hidden" name="back" value="{{ back }}">
+    <div id="alloc-rows" class="alloc-rows">
+      {% set rows = allocations if allocations else [None, None] %}
+      {% for a in rows %}
+      <div class="alloc-row">
+        <select name="alloc_category">
+          <option value="">カテゴリ</option>
+          {% for c in categories %}<option value="{{ c }}" {{ 'selected' if a and a.category == c }}>{{ c }}</option>{% endfor %}
+        </select>
+        <input type="number" name="alloc_amount" class="alloc-amount" inputmode="numeric" placeholder="金額" value="{{ a.amount if a else '' }}">
+        <input type="text" name="alloc_memo" placeholder="メモ" value="{{ a.memo if a else '' }}">
+        <button type="button" class="btn btn-sm alloc-remove" aria-label="行を削除">×</button>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="alloc-footer">
+      <button type="button" class="btn btn-sm" id="alloc-add">+ 行を追加</button>
+      <span id="alloc-sum" class="alloc-sum">合計 0 円 / {{ tx.amount|yen }} 円</span>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" type="submit" id="alloc-submit">内訳を保存</button>
+    </div>
+  </form>
+  {% if allocations %}
+  <form method="post" action="{{ url_for('ledger.clear_allocations', tx_id=tx.id) }}" class="inline" onsubmit="return confirm('内訳を削除しますか?')">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="btn btn-sm btn-danger" type="submit">内訳をすべて削除</button>
+  </form>
+  {% endif %}
+</section>
+{% endblock %}

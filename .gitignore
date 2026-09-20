@@ -216,3 +216,19 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- Smart Ledger ----
+.env
+.venv/
+venv/
+data/
+backup/
+logs/
+*.xlsx
+*.csv
+*.log
+__pycache__/
+.pytest_cache/
+# テスト用fixtureだけはGit管理を許可(架空データのみ)
+!tests/fixtures/
+!tests/fixtures/*.csv

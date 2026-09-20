@@ -1,0 +1,46 @@
+{# 明細リスト: PC ではテーブル、スマホではカード表示。CSS で切り替える。 #}
+{% macro tx_list(transactions, alloc_ids, back=None) -%}
+{% if not transactions %}
+  <p class="empty">明細がありません。</p>
+{% else %}
+<div class="tx-table-wrap">
+<table class="tx-table">
+  <thead>
+    <tr><th>利用日</th><th>加盟店</th><th class="num">金額</th><th>カテゴリ</th><th>分類</th><th class="num">確信度</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for t in transactions %}
+    <tr class="{{ 'review' if t.needs_review(threshold) }}">
+      <td class="nowrap">{{ t.usage_date.strftime('%Y/%m/%d') }}</td>
+      <td class="merchant" title="{{ t.merchant_raw }}">{{ t.merchant_normalized }}{% if t.memo %}<span class="memo">{{ t.memo }}</span>{% endif %}</td>
+      <td class="num">{{ t.amount|yen }} 円</td>
+      <td><span class="badge cat">{{ t.category or '未分類' }}</span>{% if t.id in alloc_ids %}<span class="badge alloc">内訳</span>{% endif %}</td>
+      <td><span class="badge src src-{{ t.classification_source }}">{{ t.classification_source|source_label }}</span></td>
+      <td class="num">{{ t.confidence|conf }}</td>
+      <td><a class="btn btn-sm" href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=back or request.full_path) }}">編集</a></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<ul class="tx-cards">
+  {% for t in transactions %}
+  <li class="tx-card {{ 'review' if t.needs_review(threshold) }}">
+    <a href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=back or request.full_path) }}">
+      <div class="tx-card-row">
+        <span class="tx-date">{{ t.usage_date.strftime('%m/%d') }}</span>
+        <span class="tx-merchant">{{ t.merchant_normalized }}</span>
+        <span class="tx-amount">{{ t.amount|yen }}<small>円</small></span>
+      </div>
+      <div class="tx-card-row sub">
+        <span class="badge cat">{{ t.category or '未分類' }}</span>
+        {% if t.id in alloc_ids %}<span class="badge alloc">内訳</span>{% endif %}
+        <span class="badge src src-{{ t.classification_source }}">{{ t.classification_source|source_label }}{% if t.confidence is not none %} {{ t.confidence|conf }}{% endif %}</span>
+        {% if t.memo %}<span class="memo">{{ t.memo }}</span>{% endif %}
+      </div>
+    </a>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{%- endmacro %}
