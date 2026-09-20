@@ -1,0 +1,11 @@
+# CLAUDE.md のコードスタイルに合わせた ruff 設定
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]
+
+[format]
+quote-style = "single"
+docstring-code-format = false

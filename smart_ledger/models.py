@@ -1,7 +1,7 @@
-"""家計簿の中心となるドメインモデル。
+"""家計簿の中心となるドメインモデル
 
 Jev はあくまで「未知の加盟店に初期カテゴリを付ける交換可能な分類器」であり、
-ここに定義する Transaction / Category / MerchantRule / Allocation がアプリの中核。
+ここに定義する Transaction / Category / MerchantRule / Allocation がアプリの中核
 """
 
 from __future__ import annotations
@@ -11,78 +11,78 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, ClassVar
 
-DEFAULT_CATEGORIES: tuple[str, ...] = (
-    "食費",
-    "外食",
-    "日用品・買い物",
-    "住居・光熱",
-    "通信",
-    "交通",
-    "保険・税金",
-    "娯楽・サブスク",
-    "衣服・美容",
-    "その他",
-)
-FALLBACK_CATEGORY = "その他"
-
-# Jev のカテゴリ選択に使う説明文(criteria)。カテゴリは categories シートで管理し、
-# 説明はここで補う。未知のカテゴリは名前のみで渡す。
-CATEGORY_DESCRIPTIONS: dict[str, str] = {
-    "食費": "スーパー・食料品店・食材の購入、飲料(自宅で消費するもの)",
-    "外食": "レストラン・カフェ・居酒屋・ファストフード・フードデリバリー",
-    "日用品・買い物": "ドラッグストア・ホームセンター・雑貨・家電・ネット通販の一般的な買い物",
-    "住居・光熱": "家賃・住宅ローン・電気・ガス・水道",
-    "通信": "携帯電話料金・インターネット回線・ケーブルテレビ・プロバイダ",
-    "交通": "電車・バス・タクシー・交通系ICチャージ・ガソリン・高速道路・駐車場",
-    "保険・税金": "生命保険・医療保険・損害保険の保険料、税金・公的支払い",
-    "娯楽・サブスク": "動画・音楽配信、ゲーム、書籍、映画、旅行、趣味、各種サブスクリプション",
-    "衣服・美容": "衣料品・靴・美容院・化粧品・エステ",
-    "その他": "上記のどれにも当てはまらない、または判断できない支出(送金・チャージ系サービスを含む)",
-}
-
-# classification_source の値
-SOURCE_RULE = "rule"
-SOURCE_JEV = "jev"
-SOURCE_MANUAL = "manual"
-SOURCE_ERROR = "error"  # Jev 呼び出し失敗・APIキー未設定など
+from .constants import DEFAULT_CATEGORIES, SOURCE_ERROR, SOURCE_JEV
 
 
 def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:12]}"
+    """接頭辞付きの短い一意 ID を生成する
+
+    Args:
+        prefix: 'tx' や 'imp' などの接頭辞
+    """
+    return f'{prefix}_{uuid.uuid4().hex[:12]}'
 
 
 def now_iso() -> str:
-    return datetime.now().replace(microsecond=0).isoformat(sep=" ")
+    """現在時刻を 'YYYY-MM-DD HH:MM:SS' 形式で返す"""
+    return datetime.now().replace(microsecond=0).isoformat(sep=' ')
 
 
-def _to_str(value: Any) -> str:
+def to_str(value: Any) -> str:
+    """Excel セルの値を文字列に変換する（None は空文字、日付は ISO 形式）
+
+    Args:
+        value: セルの値
+    """
     if value is None:
-        return ""
+        return ''
+
     if isinstance(value, (datetime, date)):
-        return value.isoformat()[:19].replace("T", " ")
+        return value.isoformat()[:19].replace('T', ' ')
+
     return str(value)
 
 
-def _to_date(value: Any) -> date:
+def to_date(value: Any) -> date:
+    """Excel セルの値を date に変換する
+
+    Args:
+        value: datetime / date / 'YYYY-MM-DD' または 'YYYY/MM/DD' 形式の文字列
+    """
     if isinstance(value, datetime):
         return value.date()
+
     if isinstance(value, date):
         return value
-    text = str(value).strip()[:10].replace("/", "-")
+
+    text = str(value).strip()[:10].replace('/', '-')
     return date.fromisoformat(text)
 
 
-def _to_int(value: Any) -> int:
-    if value is None or value == "":
+def to_int(value: Any) -> int:
+    """Excel セルの値を int に変換する（空は 0、カンマや通貨記号は除去）
+
+    Args:
+        value: セルの値
+    """
+    if value is None or value == '':
         return 0
+
     if isinstance(value, str):
-        value = value.replace(",", "").replace("¥", "").replace("￥", "").strip()
+        value = value.replace(',', '').replace('¥', '').replace('￥', '').strip()
+
     return int(round(float(value)))
 
 
-def _to_float_or_none(value: Any) -> float | None:
-    if value is None or value == "":
+def to_float_or_none(value: Any) -> float | None:
+    """Excel セルの値を float に変換する（空や変換不能なら None）
+
+    Args:
+        value: セルの値
+    """
+    if value is None or value == '':
         return None
+
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -91,20 +91,22 @@ def _to_float_or_none(value: Any) -> float | None:
 
 @dataclass
 class Transaction:
+    """カード利用明細 1 行（transactions シートの 1 行に対応）"""
+
     COLUMNS: ClassVar[tuple[str, ...]] = (
-        "id",
-        "usage_date",
-        "merchant_raw",
-        "merchant_normalized",
-        "amount",
-        "category",
-        "confidence",
-        "classification_source",
-        "card",
-        "import_id",
-        "imported_at",
-        "row_key",
-        "memo",
+        'id',
+        'usage_date',
+        'merchant_raw',
+        'merchant_normalized',
+        'amount',
+        'category',
+        'confidence',
+        'classification_source',
+        'card',
+        'import_id',
+        'imported_at',
+        'row_key',
+        'memo',
     )
 
     id: str
@@ -112,29 +114,39 @@ class Transaction:
     merchant_raw: str
     merchant_normalized: str
     amount: int
-    category: str = ""
+    category: str = ''
     confidence: float | None = None
-    classification_source: str = ""
-    card: str = ""
-    import_id: str = ""
-    imported_at: str = ""
-    row_key: str = ""
-    memo: str = ""
+    classification_source: str = ''
+    card: str = ''
+    import_id: str = ''
+    imported_at: str = ''
+    row_key: str = ''
+    memo: str = ''
 
     @property
     def month(self) -> str:
-        return self.usage_date.strftime("%Y-%m")
+        """利用日の年月（'YYYY-MM'）"""
+        return self.usage_date.strftime('%Y-%m')
 
     def needs_review(self, threshold: float) -> bool:
+        """要確認かどうかを返す（未分類 / Jev エラー / confidence が閾値未満）
+
+        Args:
+            threshold: 自動採用する confidence の閾値
+        """
         if not self.category:
             return True
+
         if self.classification_source == SOURCE_ERROR:
             return True
+
         if self.classification_source == SOURCE_JEV:
             return self.confidence is None or self.confidence < threshold
+
         return False
 
     def to_row(self) -> list[Any]:
+        """Excel 行（COLUMNS 順）に変換する"""
         return [
             self.id,
             self.usage_date.isoformat(),
@@ -152,117 +164,154 @@ class Transaction:
         ]
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Transaction":
+    def from_row(cls, row: dict[str, Any]) -> Transaction:
+        """Excel 行（列名 → 値の dict）から生成する
+
+        Args:
+            row: 列名をキーにしたセル値の dict
+        """
         return cls(
-            id=_to_str(row.get("id")),
-            usage_date=_to_date(row.get("usage_date")),
-            merchant_raw=_to_str(row.get("merchant_raw")),
-            merchant_normalized=_to_str(row.get("merchant_normalized")),
-            amount=_to_int(row.get("amount")),
-            category=_to_str(row.get("category")),
-            confidence=_to_float_or_none(row.get("confidence")),
-            classification_source=_to_str(row.get("classification_source")),
-            card=_to_str(row.get("card")),
-            import_id=_to_str(row.get("import_id")),
-            imported_at=_to_str(row.get("imported_at")),
-            row_key=_to_str(row.get("row_key")),
-            memo=_to_str(row.get("memo")),
+            id=to_str(row.get('id')),
+            usage_date=to_date(row.get('usage_date')),
+            merchant_raw=to_str(row.get('merchant_raw')),
+            merchant_normalized=to_str(row.get('merchant_normalized')),
+            amount=to_int(row.get('amount')),
+            category=to_str(row.get('category')),
+            confidence=to_float_or_none(row.get('confidence')),
+            classification_source=to_str(row.get('classification_source')),
+            card=to_str(row.get('card')),
+            import_id=to_str(row.get('import_id')),
+            imported_at=to_str(row.get('imported_at')),
+            row_key=to_str(row.get('row_key')),
+            memo=to_str(row.get('memo')),
         )
 
 
 @dataclass
 class MerchantRule:
-    COLUMNS: ClassVar[tuple[str, ...]] = ("merchant_pattern", "category", "created_at")
+    """加盟店パターン → カテゴリの固定ルール（merchant_rules シート）"""
+
+    COLUMNS: ClassVar[tuple[str, ...]] = ('merchant_pattern', 'category', 'created_at')
 
     merchant_pattern: str
     category: str
     created_at: str = field(default_factory=now_iso)
 
     def to_row(self) -> list[Any]:
+        """Excel 行（COLUMNS 順）に変換する"""
         return [self.merchant_pattern, self.category, self.created_at]
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "MerchantRule":
+    def from_row(cls, row: dict[str, Any]) -> MerchantRule:
+        """Excel 行から生成する
+
+        Args:
+            row: 列名をキーにしたセル値の dict
+        """
         return cls(
-            merchant_pattern=_to_str(row.get("merchant_pattern")),
-            category=_to_str(row.get("category")),
-            created_at=_to_str(row.get("created_at")),
+            merchant_pattern=to_str(row.get('merchant_pattern')),
+            category=to_str(row.get('category')),
+            created_at=to_str(row.get('created_at')),
         )
 
 
 @dataclass
 class Category:
-    COLUMNS: ClassVar[tuple[str, ...]] = ("category", "sort_order")
+    """家計簿カテゴリ（categories シート）"""
+
+    COLUMNS: ClassVar[tuple[str, ...]] = ('category', 'sort_order')
 
     category: str
     sort_order: int
 
     def to_row(self) -> list[Any]:
+        """Excel 行（COLUMNS 順）に変換する"""
         return [self.category, self.sort_order]
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Category":
-        return cls(category=_to_str(row.get("category")), sort_order=_to_int(row.get("sort_order")))
+    def from_row(cls, row: dict[str, Any]) -> Category:
+        """Excel 行から生成する
+
+        Args:
+            row: 列名をキーにしたセル値の dict
+        """
+        return cls(category=to_str(row.get('category')), sort_order=to_int(row.get('sort_order')))
 
 
 @dataclass
 class ImportRecord:
+    """CSV 取込の履歴（imports シート）"""
+
     COLUMNS: ClassVar[tuple[str, ...]] = (
-        "import_id",
-        "filename",
-        "file_hash",
-        "imported_at",
-        "card",
-        "row_count",
+        'import_id',
+        'filename',
+        'file_hash',
+        'imported_at',
+        'card',
+        'row_count',
     )
 
     import_id: str
     filename: str
     file_hash: str
     imported_at: str
-    card: str = ""
+    card: str = ''
     row_count: int = 0
 
     def to_row(self) -> list[Any]:
+        """Excel 行（COLUMNS 順）に変換する"""
         return [self.import_id, self.filename, self.file_hash, self.imported_at, self.card, self.row_count]
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "ImportRecord":
+    def from_row(cls, row: dict[str, Any]) -> ImportRecord:
+        """Excel 行から生成する
+
+        Args:
+            row: 列名をキーにしたセル値の dict
+        """
         return cls(
-            import_id=_to_str(row.get("import_id")),
-            filename=_to_str(row.get("filename")),
-            file_hash=_to_str(row.get("file_hash")),
-            imported_at=_to_str(row.get("imported_at")),
-            card=_to_str(row.get("card")),
-            row_count=_to_int(row.get("row_count")),
+            import_id=to_str(row.get('import_id')),
+            filename=to_str(row.get('filename')),
+            file_hash=to_str(row.get('file_hash')),
+            imported_at=to_str(row.get('imported_at')),
+            card=to_str(row.get('card')),
+            row_count=to_int(row.get('row_count')),
         )
 
 
 @dataclass
 class Allocation:
-    COLUMNS: ClassVar[tuple[str, ...]] = ("transaction_id", "category", "amount", "memo")
+    """1 明細を複数カテゴリに分割した内訳（allocations シート）"""
+
+    COLUMNS: ClassVar[tuple[str, ...]] = ('transaction_id', 'category', 'amount', 'memo')
 
     transaction_id: str
     category: str
     amount: int
-    memo: str = ""
+    memo: str = ''
 
     def to_row(self) -> list[Any]:
+        """Excel 行（COLUMNS 順）に変換する"""
         return [self.transaction_id, self.category, self.amount, self.memo]
 
     @classmethod
-    def from_row(cls, row: dict[str, Any]) -> "Allocation":
+    def from_row(cls, row: dict[str, Any]) -> Allocation:
+        """Excel 行から生成する
+
+        Args:
+            row: 列名をキーにしたセル値の dict
+        """
         return cls(
-            transaction_id=_to_str(row.get("transaction_id")),
-            category=_to_str(row.get("category")),
-            amount=_to_int(row.get("amount")),
-            memo=_to_str(row.get("memo")),
+            transaction_id=to_str(row.get('transaction_id')),
+            category=to_str(row.get('category')),
+            amount=to_int(row.get('amount')),
+            memo=to_str(row.get('memo')),
         )
 
 
 @dataclass
 class ClassificationResult:
-    """分類器の出力。Jev 以外の分類器に置き換えても同じ形で返す。"""
+    """分類器の出力（Jev 以外の分類器に置き換えても同じ形で返す）"""
 
     category: str
     confidence: float | None
@@ -273,7 +322,7 @@ class ClassificationResult:
 
 @dataclass
 class LedgerData:
-    """household.xlsx の全シートをメモリ上に載せたもの。"""
+    """household.xlsx の全シートをメモリ上に載せたもの"""
 
     transactions: list[Transaction] = field(default_factory=list)
     merchant_rules: list[MerchantRule] = field(default_factory=list)
@@ -282,25 +331,43 @@ class LedgerData:
     allocations: list[Allocation] = field(default_factory=list)
 
     def category_names(self) -> list[str]:
+        """sort_order 順のカテゴリ名を返す（categories シートが空なら初期値）"""
         cats = sorted(self.categories, key=lambda c: (c.sort_order, c.category))
         names = [c.category for c in cats if c.category]
         return names or list(DEFAULT_CATEGORIES)
 
     def find_transaction(self, tx_id: str) -> Transaction | None:
+        """ID で明細を探す
+
+        Args:
+            tx_id: 明細 ID
+        """
         for tx in self.transactions:
             if tx.id == tx_id:
                 return tx
+
         return None
 
     def allocations_for(self, tx_id: str) -> list[Allocation]:
+        """明細に紐づく内訳を返す
+
+        Args:
+            tx_id: 明細 ID
+        """
         return [a for a in self.allocations if a.transaction_id == tx_id]
 
     def existing_row_keys(self) -> set[str]:
+        """取込済み明細の row_key 集合を返す"""
         return {tx.row_key for tx in self.transactions if tx.row_key}
 
     def has_file_hash(self, file_hash: str) -> ImportRecord | None:
+        """同じファイルハッシュの取込履歴を探す
+
+        Args:
+            file_hash: CSV の SHA-256
+        """
         for imp in self.imports:
             if imp.file_hash == file_hash:
                 return imp
-        return None
 
+        return None
