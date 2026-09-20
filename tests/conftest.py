@@ -10,6 +10,13 @@ from smart_ledger.config import Config
 from smart_ledger.services.backup import DropboxBackup
 from smart_ledger.services.excel_repository import ExcelRepository
 
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture
+def fixture_csv_bytes() -> bytes:
+    return (FIXTURES / "sample_statement_cp932.csv").read_bytes()
+
 
 @pytest.fixture
 def repo(tmp_path: Path) -> ExcelRepository:
