@@ -33,14 +33,14 @@
     <dt>重複(取込済み)</dt><dd><strong class="{{ 'warn' if preview.duplicate_count }}">{{ preview.duplicate_count }} 件</strong></dd>
   </dl>
   {% if preview.already_imported %}
-    <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }})</div>
+    <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }}){% if preview.new_count %} 取り消しで消えた明細があるため、新規 {{ preview.new_count }} 件だけ取り込めます。{% endif %}</div>
   {% elif preview.new_count == 0 %}
     <div class="flash flash-warning">新規の明細はありません。すべて取込済みの明細と一致しました。</div>
   {% endif %}
   {% for w in preview.warnings %}<div class="flash flash-warning">{{ w }}</div>{% endfor %}
 
   <div class="actions">
-    {% if not preview.already_imported and preview.new_count > 0 %}
+    {% if preview.new_count > 0 %}
     <form method="post" action="{{ url_for('ledger.import_commit') }}" class="inline" id="commit-form">
       <input type="hidden" name="token" value="{{ preview.token }}">
       <button class="btn btn-primary" type="submit" id="commit-btn">{{ preview.new_count }} 件を取り込む</button>

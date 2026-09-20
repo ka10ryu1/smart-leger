@@ -22,7 +22,7 @@
       <span class="rule-pattern">{{ r.merchant_pattern }}</span>
       <span class="badge cat">{{ r.category }}</span>
       <span class="muted small">{{ r.created_at }}</span>
-      <form method="post" action="{{ url_for('ledger.remove_rule') }}" class="inline" onsubmit="return confirm('このルールを削除しますか?')">
+      <form method="post" action="{{ url_for('ledger.remove_rule') }}" class="inline" data-confirm="このルールを削除しますか?">
         <input type="hidden" name="merchant_pattern" value="{{ r.merchant_pattern }}">
         <button class="btn btn-sm btn-danger" type="submit">削除</button>
       </form>

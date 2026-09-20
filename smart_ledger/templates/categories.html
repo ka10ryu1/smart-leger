@@ -33,7 +33,7 @@
       <div class="category-meta">
         <span class="muted small">明細 {{ use['transactions'] }} / ルール {{ use['rules'] }} / 内訳 {{ use['allocations'] }}</span>
         {% if c.category != fallback and use.total() == 0 %}
-        <form method="post" action="{{ url_for('ledger.delete_category_route') }}" class="inline" onsubmit="return confirm('このカテゴリを削除しますか?')">
+        <form method="post" action="{{ url_for('ledger.delete_category_route') }}" class="inline" data-confirm="このカテゴリを削除しますか?">
           <input type="hidden" name="category" value="{{ c.category }}">
           <button class="btn btn-sm btn-danger" type="submit">削除</button>
         </form>

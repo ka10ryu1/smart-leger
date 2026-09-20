@@ -51,7 +51,7 @@ from .services.categories import (
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
-from .services.importer import Importer, ImportResult, ImportUndoSummary, summarize_import, undo_import
+from .services.importer import Importer, ImportUndoSummary, summarize_import, undo_import
 from .services.jev_client import JevClient
 from .services.merchant_rules import delete_rule, match_rule, preview_rule_targets, rule_targets, upsert_rule
 from .services.normalize import merchant_key
@@ -491,9 +491,12 @@ def import_history(data: LedgerData) -> tuple[list[ImportRecord], dict[str, Impo
 
     Args:
         data: 全データ
+
+    Returns:
+        (取込履歴のリスト, import_id → 件数のまとめ)
     """
     imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
-    summaries = {i.import_id: summary for i in imports if (summary := summarize_import(data, i.import_id))}
+    summaries = {i.import_id: summarize_import(data, i) for i in imports}
     return imports, summaries
 
 
@@ -537,15 +540,9 @@ def import_commit() -> WerkzeugResponse:
         flash('プレビュー情報が見つかりません。もう一度 CSV を選択してください。', 'error')
         return redirect(url_for('ledger.import_page'))
 
-    def mutate(data: LedgerData) -> ImportResult:
-        if data.has_file_hash(preview.file_hash):
-            raise CsvParseError('このCSVはすでに取り込み済みです。')
-
-        return svc().importer.commit(data, preview)
-
     try:
-        result = svc().repo.update(mutate)
-    except CsvParseError as exc:
+        result = svc().repo.update(lambda data: svc().importer.commit(data, preview))
+    except ValueError as exc:  # 主に新規行なし（プレビュー後に取り込まれた、または取込済み CSV）
         flash(str(exc), 'warning')
         return redirect(url_for('ledger.import_page'))
 
@@ -579,11 +576,8 @@ def import_undo(import_id: str) -> WerkzeugResponse:
     """
 
     def message(summary: ImportUndoSummary) -> str:
-        text = f'取込「{summary.filename}」を取り消し、明細 {summary.transactions} 件を削除しました。'
-        if summary.allocations:
-            text += f' 内訳 {summary.allocations} 件も削除しました。'
-
-        return text + ' 同じ CSV を取り込み直せます。'
+        extra = f' 内訳 {summary.allocations} 件も削除しました。' if summary.allocations else ''
+        return f'取込「{summary.filename}」を取り消し、明細 {summary.transactions} 件を削除しました。{extra} 同じ CSV を取り込み直せます。'
 
     return save_and_redirect(lambda data: undo_import(data, import_id), message, url_for('ledger.import_page'))
 

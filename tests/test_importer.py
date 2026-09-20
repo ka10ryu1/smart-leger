@@ -174,17 +174,17 @@ def test_undo_import_removes_only_that_import(tmp_path: Path, repo: ExcelReposit
     edited.classification_source = 'manual'
     edited.memo = 'メモ'
     data.allocations.append(Allocation(edited.id, '食費', edited.amount))
+    kept = next(t for t in data.transactions if t.import_id == second.import_id)
+    data.allocations.append(Allocation(kept.id, '食費', kept.amount))
     data.merchant_rules.append(MerchantRule('サンプル', '食費'))
 
-    summary = summarize_import(data, first.import_id)
-    assert summary is not None
+    summary = summarize_import(data, next(i for i in data.imports if i.import_id == first.import_id))
     assert (summary.transactions, summary.manual_edits, summary.allocations) == (10, 1, 1)
 
     result = undo_import(data, first.import_id)
     assert result.transactions == 10
-    assert all(t.import_id != first.import_id for t in data.transactions)
     assert len(data.transactions) == 1 and data.transactions[0].import_id == second.import_id
-    assert data.allocations == []
+    assert [a.transaction_id for a in data.allocations] == [kept.id]
     assert [i.import_id for i in data.imports] == [second.import_id]
     assert len(data.merchant_rules) == 1
     assert len(data.category_names()) == 10
@@ -194,6 +194,35 @@ def test_undo_import_removes_only_that_import(tmp_path: Path, repo: ExcelReposit
     preview = importer.preview(data, 'a.csv', fixture_csv_bytes)
     assert preview.already_imported is False
     assert preview.new_count == 10 and preview.duplicate_count == 0
+    # b.csv は履歴（ハッシュ）が残るので「取込済み」表示になるが、消えた 10 行は新規として取り込める
+    preview = importer.preview(data, 'b.csv', fixture_csv_bytes + extra_line)
+    assert preview.already_imported is True and preview.new_count == 10
+    result = importer.commit(data, preview)
+    assert (result.imported, result.skipped_duplicates) == (10, 1)
+
+
+def test_commit_keeps_rows_previewed_as_duplicate_skipped(
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+) -> None:
+    """プレビューで重複だった行は、確定までに取り消しで消えていても取り込まない（画面の件数どおりに確定する）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier(), 0.85))
+    data = repo.load()
+    first = importer.commit(data, importer.preview(data, 'a.csv', fixture_csv_bytes))
+    extra_line = '2026/09/10,アタラシイミセ,"2,000",,"2,000",１回払,,"2,000",,   ,\r\n'.encode('cp932')
+    stale = importer.preview(data, 'b.csv', fixture_csv_bytes + extra_line)
+    assert stale.new_count == 1 and stale.duplicate_count == 10
+    undo_import(data, first.import_id)
+
+    result = importer.commit(data, stale)
+    assert (result.imported, result.skipped_duplicates) == (1, 10)
+    with pytest.raises(ValueError, match='新規の明細がありません'):
+        importer.commit(data, stale)
 
 
 def test_undo_import_unknown_id_raises(repo: ExcelRepository) -> None:
@@ -202,7 +231,5 @@ def test_undo_import_unknown_id_raises(repo: ExcelRepository) -> None:
     Args:
         repo: 一時ディレクトリのリポジトリ
     """
-    data = repo.load()
-    assert summarize_import(data, 'imp_nothing') is None
     with pytest.raises(ImportNotFoundError):
-        undo_import(data, 'imp_nothing')
+        undo_import(repo.load(), 'imp_nothing')
