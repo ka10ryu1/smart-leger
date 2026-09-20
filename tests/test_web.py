@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import io
+from datetime import date
 
 import pytest
 from flask.testing import FlaskClient
 
 from smart_ledger import create_app
 from smart_ledger.config import Config
+from smart_ledger.models import LedgerData, Transaction
 
 
 @pytest.fixture
@@ -168,6 +170,24 @@ def test_cross_site_post_is_rejected(client: FlaskClient) -> None:
     assert client.post('/rules/add', data=data, headers={'Origin': 'https://evil.example'}).status_code == 403
     assert client.post('/rules/add', data=data, headers={'Referer': 'https://evil.example/p'}).status_code == 403
     assert client.post('/rules/add', data=data, headers={'Origin': 'http://localhost'}).status_code == 302
+
+
+def test_list_pages_render_with_confidence(client: FlaskClient) -> None:
+    """confidence 付き（Jev 分類）の明細があってもダッシュボードと明細一覧が描画できる（macro から threshold を参照する）
+
+    Args:
+        client: テストクライアント
+    """
+
+    def add_tx(data: LedgerData) -> None:
+        data.transactions.append(
+            Transaction('tx_c', date(2026, 8, 1), 'A', 'A', 100, '食費', confidence=0.5, classification_source='jev')
+        )
+
+    client.application.extensions['smart_ledger'].repo.update(add_tx)
+    for path in ('/?month=2026-08', '/transactions?month=2026-08'):
+        html = client.get(path).get_data(as_text=True)
+        assert 'class="review"' in html  # confidence 0.5 < 閾値 なので要確認の装飾が付く
 
 
 def test_category_management_flow(client: FlaskClient) -> None:

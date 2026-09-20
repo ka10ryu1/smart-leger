@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_tx_list.html" import tx_list %}
+{% from "_tx_list.html" import tx_list with context %}
 {% block title %}{{ month|month_label }} ダッシュボード{% endblock %}
 {% block content %}
 <div class="month-nav">
