@@ -312,17 +312,16 @@ smart-ledger/
 
 ### 実 API を使うライブテスト
 
-`tests/test_jev_live.py` は TypeSafe Jev の実 API を呼びます(2 回、架空の加盟店名・金額・利用日のみ送信)。
-`.env` または環境変数に `TYPESAFE_API_KEY` があるときだけ実行され、無ければ自動でスキップされます。
+`tests/test_jev_live.py` は TypeSafe Jev の実 API を呼びます(3 回、架空の加盟店名・金額・利用日のみ送信)。
+通常の `pytest` ではネットワークや API コストに左右されないよう自動で除外され、`-m live` を指定したときだけ実行されます。
+`.env` または環境変数に `TYPESAFE_API_KEY` が無ければ、明示実行時も自動でスキップされます。
 
 ```powershell
 # ライブテストだけ実行
 .\.venv\Scripts\python.exe -m pytest -m live -rs
 
-# ライブテストを除外して実行(オフライン・CI 向け)
+# ライブテストを除外して実行(既定値と同じ)
 .\.venv\Scripts\python.exe -m pytest -m "not live"
-# または
-$env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
 ```
 
 ## 開発ルール（CLAUDE.md）

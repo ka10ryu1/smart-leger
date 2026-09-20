@@ -10,8 +10,8 @@ Python 3.12 / Flask / openpyxl / httpx。Windows 直接実行を前提とし、S
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m ruff format .
 .\.venv\Scripts\python.exe tools\insert_block_blank_lines.py smart_ledger tests tools app.py
-.\.venv\Scripts\python.exe -m pytest -q            # ライブテスト（実 Jev API）は TYPESAFE_API_KEY があるときだけ動く
-.\.venv\Scripts\python.exe -m pytest -q -m "not live"
+.\.venv\Scripts\python.exe -m pytest -q            # 通常テスト（実 Jev API は既定で除外）
+.\.venv\Scripts\python.exe -m pytest -q -m live    # ライブテストを明示実行
 ```
 
 Linux / WSL では `.venv/bin/python` に読み替える。設定は `ruff.toml`（シングルクォート、行長 120）と `pytest.ini`（`live` マーカー）にある。

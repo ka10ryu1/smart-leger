@@ -399,6 +399,14 @@ def test_preview_rule_targets_matches_actual_upsert() -> None:
     assert previewed == actual == ['t2']  # t1 は長い部分一致「デンリヨク ホンシヤ」が勝つ
 
 
+def test_rule_targets_preserves_manual_edits() -> None:
+    """ルールに一致しても、過去に手動修正した明細は一括反映の対象にしない"""
+    rule = MerchantRule('サンプル', '食費')
+    automatic = Transaction('auto', date(2026, 8, 1), 'A', 'サンプルストア', 100, classification_source='jev')
+    manual = Transaction('manual', date(2026, 8, 2), 'B', 'サンプルカフェ', 200, classification_source='manual')
+    assert rule_targets([automatic, manual], [rule], rule, 'none') == [automatic]
+
+
 def test_match_rule_prefers_exact_over_key_match_regardless_of_order() -> None:
     """完全一致のルールは、先に登録されたキー一致のルールより優先される"""
     rules = [

@@ -130,3 +130,14 @@ def test_validate_allocations_rejects_unknown_category_and_empty(categories: lis
         validate_allocations(tx, [AllocationInput('', 100)], categories)
 
     assert validate_allocations(tx, [], categories) == []
+
+
+def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> None:
+    """0 円の内訳行は合計が一致しても AllocationError
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    tx = make_tx('k', date(2026, 8, 15), 100, 'その他')
+    with pytest.raises(AllocationError, match='0'):
+        validate_allocations(tx, [AllocationInput('食費', 100), AllocationInput('外食', 0, 'メモ')], categories)

@@ -1,8 +1,8 @@
 """TypeSafe Jev の実 API を叩くライブテスト
 
 - TYPESAFE_API_KEY が（環境変数または .env に）設定されているときだけ実行される
+- 通常の pytest では除外され、明示実行する場合: pytest -m live
 - SMART_LEDGER_SKIP_LIVE=1 で明示的にスキップできる
-- 通常の pytest 実行から外す場合:  pytest -m "not live"
 - 送信するのは加盟店名・金額・利用日のみ（架空の値）
 """
 

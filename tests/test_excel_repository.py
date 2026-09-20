@@ -14,7 +14,7 @@ from openpyxl import Workbook, load_workbook
 from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.models import Allocation, Category, ImportRecord, LedgerData, MerchantRule, Transaction
 from smart_ledger.services.backup import DropboxBackup, backup_destination
-from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, sheet_columns
+from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError, sheet_columns
 
 
 def test_load_creates_workbook_with_all_sheets_and_categories(repo: ExcelRepository) -> None:
@@ -184,6 +184,61 @@ def test_locked_excel_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypat
 
     assert repo.excel_path.read_bytes() == before
     assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
+
+
+def test_verify_failure_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """一時ファイルの検証失敗時は正本を変更せず、一時ファイルを残さない
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+        monkeypatch: verify を失敗させる
+    """
+    data = repo.load()
+    before = repo.excel_path.read_bytes()
+
+    def fail_verify(path: Path) -> None:
+        raise ValueError(f'broken: {path.name}')
+
+    monkeypatch.setattr(repo, 'verify', fail_verify)
+    with pytest.raises(ExcelSaveError, match='一時保存'):
+        repo.save(data)
+
+    assert repo.excel_path.read_bytes() == before
+    assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
+
+
+def test_replace_os_error_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """PermissionError 以外の正本置換失敗も ExcelSaveError にし、正本を保全して一時ファイルを片付ける
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+        monkeypatch: os.replace を OSError にする
+    """
+    data = repo.load()
+    before = repo.excel_path.read_bytes()
+    monkeypatch.setattr(os, 'replace', lambda *a, **k: (_ for _ in ()).throw(OSError('disk error')))
+    with pytest.raises(ExcelSaveError, match='正本置換'):
+        repo.save(data)
+
+    assert repo.excel_path.read_bytes() == before
+    assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
+
+
+def test_writable_probe_os_error_removes_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """正本の書き込み確認が一般の OSError で失敗したときも一時ファイルを片付ける
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+        monkeypatch: 正本を開く操作を OSError にする
+    """
+    repo.load()
+    tmp_path = repo.excel_path.parent / '~probe.tmp.xlsx'
+    tmp_path.write_bytes(b'temporary')
+    monkeypatch.setattr('builtins.open', lambda *a, **k: (_ for _ in ()).throw(OSError('I/O error')))
+    with pytest.raises(ExcelSaveError, match='書き込み確認'):
+        repo.ensure_writable(tmp_path)
+
+    assert not tmp_path.exists()
 
 
 def test_incomplete_row_is_skipped(repo: ExcelRepository) -> None:
