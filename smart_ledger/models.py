@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, ClassVar
 
-from .constants import DEFAULT_CATEGORIES, SOURCE_ERROR, SOURCE_JEV
+from .constants import CATEGORY_DESCRIPTIONS, DEFAULT_CATEGORIES, SOURCE_ERROR, SOURCE_JEV
 
 
 def new_id(prefix: str) -> str:
@@ -223,14 +223,15 @@ class MerchantRule:
 class Category:
     """家計簿カテゴリ（categories シート）"""
 
-    COLUMNS: ClassVar[tuple[str, ...]] = ('category', 'sort_order')
+    COLUMNS: ClassVar[tuple[str, ...]] = ('category', 'sort_order', 'description')
 
     category: str
     sort_order: int
+    description: str = ''  # Jev のカテゴリ選択に渡す説明（空なら constants の既定説明、無ければカテゴリ名）
 
     def to_row(self) -> list[Any]:
         """Excel 行（COLUMNS 順）に変換する"""
-        return [self.category, self.sort_order]
+        return [self.category, self.sort_order, self.description]
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> Category:
@@ -239,7 +240,11 @@ class Category:
         Args:
             row: 列名をキーにしたセル値の dict
         """
-        return cls(category=to_str(row.get('category')), sort_order=to_int(row.get('sort_order')))
+        return cls(
+            category=to_str(row.get('category')),
+            sort_order=to_int(row.get('sort_order')),
+            description=to_str(row.get('description')),
+        )
 
 
 @dataclass
@@ -333,11 +338,19 @@ class LedgerData:
     imports: list[ImportRecord] = field(default_factory=list)
     allocations: list[Allocation] = field(default_factory=list)
 
+    def sorted_categories(self) -> list[Category]:
+        """sort_order 順（同順なら名前順）のカテゴリを返す"""
+        return sorted(self.categories, key=lambda c: (c.sort_order, c.category))
+
     def category_names(self) -> list[str]:
         """sort_order 順のカテゴリ名を返す（categories シートが空なら初期値）"""
-        cats = sorted(self.categories, key=lambda c: (c.sort_order, c.category))
-        names = [c.category for c in cats if c.category]
+        names = [c.category for c in self.sorted_categories() if c.category]
         return names or list(DEFAULT_CATEGORIES)
+
+    def category_criteria(self) -> dict[str, str]:
+        """Jev の choice に渡す カテゴリ名 → 説明 を sort_order 順で返す（説明が無ければ既定説明、それも無ければ名前）"""
+        described = {c.category: c.description for c in self.categories}
+        return {name: described.get(name) or CATEGORY_DESCRIPTIONS.get(name, name) for name in self.category_names()}
 
     def find_transaction(self, tx_id: str) -> Transaction | None:
         """ID で明細を探す

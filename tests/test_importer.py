@@ -23,7 +23,7 @@ class StubClassifier:
         self.calls: list[str] = []
 
     def classify(
-        self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
+        self, merchant_normalized: str, amount: int, usage_date: date, categories: dict[str, str]
     ) -> ClassificationResult:
         """固定結果を返し、呼び出された加盟店を記録する
 

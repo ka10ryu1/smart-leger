@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from typing import Callable
 from urllib.parse import urlsplit
 
 from flask import (
@@ -20,7 +21,15 @@ from flask import (
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
-from .constants import MONTH_PATTERN, SOURCE_LABELS, SOURCE_MANUAL, SOURCE_RULE, UNCLASSIFIED_LABEL
+from .constants import (
+    CATEGORY_DESCRIPTIONS,
+    FALLBACK_CATEGORY,
+    MONTH_PATTERN,
+    SOURCE_LABELS,
+    SOURCE_MANUAL,
+    SOURCE_RULE,
+    UNCLASSIFIED_LABEL,
+)
 from .models import LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
@@ -32,6 +41,13 @@ from .services.aggregation import (
 )
 from .services.allocations import AllocationInput, replace_allocations, validate_allocations
 from .services.backup import DropboxBackup
+from .services.categories import (
+    add_category,
+    category_usage,
+    delete_category,
+    edit_category,
+    move_category,
+)
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
@@ -334,6 +350,24 @@ def edit_transaction(tx_id: str) -> str:
     )
 
 
+def save_and_redirect[T](
+    mutator: Callable[[LedgerData], T], message: Callable[[T], str], target: str
+) -> WerkzeugResponse:
+    """LedgerData の変更を保存し、成功文言（または ValueError の内容）を flash して target へ戻る
+
+    Args:
+        mutator: LedgerData を書き換えて結果を返す関数（入力不正は ValueError 系で通知する）
+        message: mutator の戻り値から成功時の flash 文言を作る関数
+        target: リダイレクト先 URL
+    """
+    try:
+        flash(message(svc().repo.update(mutator)), 'success')
+    except ValueError as exc:  # CategoryError / AllocationError / 不明なカテゴリなど
+        flash(str(exc), 'error')
+
+    return redirect(target)
+
+
 @bp.route('/transactions/<tx_id>/category', methods=['POST'])
 def update_category(tx_id: str) -> WerkzeugResponse:
     """カテゴリ変更（scope=once なら今回だけ、always ならルール登録して同じ加盟店にも反映）
@@ -345,10 +379,8 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     scope = request.form.get('scope', 'once')
     memo = request.form.get('memo', '').strip()
     back = safe_back()
-    applied_others = 0
 
-    def mutate(data: LedgerData) -> None:
-        nonlocal applied_others
+    def mutate(data: LedgerData) -> int:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
@@ -361,9 +393,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
         if scope != 'always':
-            return
+            return 0
 
         upsert_rule(data, tx.merchant_normalized, category)
+        applied_others = 0
         for other in data.transactions:  # 同じ加盟店で手動修正されていない明細にも反映する
             is_target = (
                 other.id != tx.id
@@ -379,8 +412,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             other.classification_source = SOURCE_RULE
             applied_others += 1
 
+        return applied_others
+
     try:
-        svc().repo.update(mutate)
+        applied_others = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
@@ -405,22 +440,18 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
     """
     edit_url = url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
 
-    def mutate(data: LedgerData) -> None:
+    def mutate(data: LedgerData) -> bool:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
 
+        items = parse_allocation_form()  # 金額が数値でなければ ValueError（保存前に止まる）
         replace_allocations(data, tx_id, validate_allocations(tx, items, data.category_names()))
+        return bool(items)
 
-    try:
-        items = parse_allocation_form()
-        svc().repo.update(mutate)
-    except ValueError as exc:  # 金額が数値でない / AllocationError
-        flash(str(exc), 'error')
-        return redirect(edit_url)
-
-    flash('内訳を保存しました。' if items else '内訳を削除しました。', 'success')
-    return redirect(edit_url)
+    return save_and_redirect(
+        mutate, lambda saved: '内訳を保存しました。' if saved else '内訳を削除しました。', edit_url
+    )
 
 
 @bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])
@@ -430,10 +461,11 @@ def clear_allocations(tx_id: str) -> WerkzeugResponse:
     Args:
         tx_id: 明細 ID
     """
-    back = safe_back()
-    svc().repo.update(lambda data: replace_allocations(data, tx_id, []))
-    flash('内訳を削除しました。', 'success')
-    return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+    return save_and_redirect(
+        lambda data: replace_allocations(data, tx_id, []),
+        lambda _: '内訳を削除しました。',
+        url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back()),
+    )
 
 
 # ------------------------------------------------------------------- import
@@ -478,22 +510,19 @@ def import_commit() -> WerkzeugResponse:
         flash('プレビュー情報が見つかりません。もう一度 CSV を選択してください。', 'error')
         return redirect(url_for('ledger.import_page'))
 
-    results: list[ImportResult] = []
-
-    def mutate(data: LedgerData) -> None:
+    def mutate(data: LedgerData) -> ImportResult:
         if data.has_file_hash(preview.file_hash):
             raise CsvParseError('このCSVはすでに取り込み済みです。')
 
-        results.append(svc().importer.commit(data, preview))
+        return svc().importer.commit(data, preview)
 
     try:
-        svc().repo.update(mutate)
+        result = svc().repo.update(mutate)
     except CsvParseError as exc:
         flash(str(exc), 'warning')
         return redirect(url_for('ledger.import_page'))
 
     svc().importer.discard(token)
-    result = results[0]
     msg = (
         f'{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、'
         f'ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。'
@@ -543,23 +572,91 @@ def add_rule() -> WerkzeugResponse:
         flash('加盟店パターンとカテゴリを入力してください。', 'error')
         return redirect(url_for('ledger.rules'))
 
-    try:
-        svc().repo.update(lambda data: upsert_rule(data, pattern, category))
-    except ValueError as exc:  # 不明なカテゴリなど
-        flash(str(exc), 'error')
-        return redirect(url_for('ledger.rules'))
-
-    flash(f'ルールを登録しました: {pattern} → {category}', 'success')
-    return redirect(url_for('ledger.rules'))
+    return save_and_redirect(
+        lambda data: upsert_rule(data, pattern, category),
+        lambda _: f'ルールを登録しました: {pattern} → {category}',
+        url_for('ledger.rules'),
+    )
 
 
 @bp.route('/rules/delete', methods=['POST'])
 def remove_rule() -> WerkzeugResponse:
     """ルールを削除する"""
     pattern = request.form.get('merchant_pattern', '')
-    svc().repo.update(lambda data: delete_rule(data, pattern))
-    flash('ルールを削除しました。', 'success')
-    return redirect(url_for('ledger.rules'))
+    return save_and_redirect(
+        lambda data: delete_rule(data, pattern), lambda _: 'ルールを削除しました。', url_for('ledger.rules')
+    )
+
+
+# --------------------------------------------------------------- categories
+@bp.route('/categories')
+def categories_page() -> str:
+    """カテゴリ管理画面（追加・名称変更・並び替え・削除）"""
+    data = load_data()
+    return render_template(
+        'categories.html',
+        categories=data.sorted_categories(),
+        usage=category_usage(data),
+        fallback=FALLBACK_CATEGORY,
+        default_descriptions=CATEGORY_DESCRIPTIONS,
+    )
+
+
+@bp.route('/categories/add', methods=['POST'])
+def add_category_route() -> WerkzeugResponse:
+    """カテゴリを追加する（メッセージには正規化後の名前を使う）"""
+    name = request.form.get('name', '')
+    description = request.form.get('description', '')
+    return save_and_redirect(
+        lambda data: add_category(data, name, description),
+        lambda added: f'カテゴリ「{added.category}」を追加しました。',
+        url_for('ledger.categories_page'),
+    )
+
+
+@bp.route('/categories/edit', methods=['POST'])
+def edit_category_route() -> WerkzeugResponse:
+    """カテゴリの名称・説明を変更する（名称変更は明細・ルール・内訳に伝播し、件数を表示する）"""
+    name = request.form.get('category', '')
+    new_name = request.form.get('new_name', '')
+    description = request.form.get('description', '')
+    return save_and_redirect(
+        lambda data: edit_category(data, name, new_name, description),
+        lambda changed: (
+            f'カテゴリを保存し、名称変更を明細・ルール・内訳の {changed} 件に反映しました。'
+            if changed
+            else 'カテゴリを保存しました。'
+        ),
+        url_for('ledger.categories_page'),
+    )
+
+
+@bp.route('/categories/move', methods=['POST'])
+def move_category_route() -> WerkzeugResponse:
+    """カテゴリの表示順を上下に動かす（端にあって動かない場合はエラー表示のみで保存しない）"""
+    name = request.form.get('category', '')
+    direction = request.form.get('direction', '')
+    if direction not in ('up', 'down'):
+        flash('移動方向が不正です。', 'error')
+        return redirect(url_for('ledger.categories_page'))
+
+    delta = -1 if direction == 'up' else 1
+    return save_and_redirect(
+        lambda data: move_category(data, name, delta),
+        lambda _: '並び順を変更しました。',
+        url_for('ledger.categories_page'),
+    )
+
+
+@bp.route('/categories/delete', methods=['POST'])
+def delete_category_route() -> WerkzeugResponse:
+    """未使用のカテゴリを削除する"""
+    name = request.form.get('category', '')
+    return save_and_redirect(
+        lambda data: delete_category(data, name),
+        lambda _: f'カテゴリ「{name}」を削除しました。',
+        url_for('ledger.categories_page'),
+    )
 
 
 @bp.route('/health')

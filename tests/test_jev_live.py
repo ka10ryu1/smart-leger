@@ -58,15 +58,15 @@ def test_live_choice_returns_valid_category_and_confidence(live_client: JevClien
     assert choice.choice == '通信'
 
 
-def test_live_pipeline_marks_high_confidence_as_auto_accepted(live_client: JevClient, categories: list[str]) -> None:
+def test_live_pipeline_marks_high_confidence_as_auto_accepted(live_client: JevClient, criteria: dict[str, str]) -> None:
     """保険料の加盟店は「保険・税金」になり、閾値判定は confidence に従う
 
     Args:
         live_client: 実 API クライアント
-        categories: 初期カテゴリ
+        criteria: 初期カテゴリの 名前 → 説明
     """
     pipeline = ClassificationPipeline(JevClassifier(live_client), threshold=0.85)
-    result = pipeline.classify('サンプルセイメイホケン(ホケンリヨウ)', 5000, date(2026, 8, 15), categories, [])
+    result = pipeline.classify('サンプルセイメイホケン(ホケンリヨウ)', 5000, date(2026, 8, 15), criteria, [])
     assert result.source == 'jev'
     assert result.category == '保険・税金'
     assert result.confidence is not None

@@ -60,6 +60,7 @@ def test_roundtrip_write_read(repo: ExcelRepository) -> None:
     data.merchant_rules.append(MerchantRule('KYASH', 'その他', '2026-09-20 10:00:00'))
     data.imports.append(ImportRecord('imp_1', 'a.csv', 'hash', '2026-09-20 10:00:00', 'テストカード', 1))
     data.allocations.append(Allocation('tx_1', '食費', 10000, '内訳'))
+    data.categories[0].description = 'スーパーでの買い物'
     repo.save(data)
 
     loaded = repo.load()
@@ -70,6 +71,7 @@ def test_roundtrip_write_read(repo: ExcelRepository) -> None:
     assert loaded.merchant_rules[0].merchant_pattern == 'KYASH'
     assert loaded.imports[0].file_hash == 'hash'
     assert loaded.allocations[0].amount == 10000
+    assert loaded.categories[0].description == 'スーパーでの買い物'
 
 
 def test_save_creates_generation_backup_and_no_temp_left(repo: ExcelRepository) -> None:
@@ -137,13 +139,18 @@ def test_load_tolerates_missing_columns(tmp_path: Path) -> None:
     ws.append(['id', 'usage_date', 'merchant_raw', 'merchant_normalized', 'amount', 'category'])
     ws.append(['tx_old', '2026-07-01', 'A', 'A', 100, '食費'])
     for name, columns in sheet_columns().items():
-        if name != 'transactions':
+        if name == 'categories':
+            ws_cat = wb.create_sheet(name)
+            ws_cat.append(['category', 'sort_order'])  # description 列が無い旧形式
+            ws_cat.append(['食費', 1])
+        elif name != 'transactions':
             wb.create_sheet(name).append(list(columns))
 
     wb.save(path)
     data = ExcelRepository(path, backup_dir=tmp_path / 'b').load()
     assert data.transactions[0].id == 'tx_old'
     assert data.transactions[0].row_key == '' and data.transactions[0].memo == ''
+    assert data.categories[0].category == '食費' and data.categories[0].description == ''
 
 
 def test_formula_like_text_is_saved_as_string(repo: ExcelRepository) -> None:

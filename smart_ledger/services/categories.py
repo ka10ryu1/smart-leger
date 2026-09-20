@@ -1,0 +1,151 @@
+"""カテゴリ（categories シート）の追加・名称変更・並び替え・削除
+
+- 名称変更は transactions / merchant_rules / allocations の category にも伝播させる
+- フォールバックカテゴリ（Jev 失敗時に使う「その他」）は名称変更・削除しない
+- 明細・ルール・内訳で使われているカテゴリは削除しない（先に付け替えてもらう）
+"""
+
+from __future__ import annotations
+
+from collections import Counter, defaultdict
+
+from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY
+from ..models import Category, LedgerData
+from .normalize import normalize_merchant
+
+
+class CategoryError(ValueError):
+    """カテゴリ操作の入力が不正"""
+
+
+def require_category(data: LedgerData, name: str) -> Category:
+    """名前でカテゴリを探す（無ければ CategoryError）
+
+    Args:
+        data: 対象の LedgerData
+        name: カテゴリ名（シート上の表記そのまま）
+    """
+    for category in data.categories:
+        if category.category == name:
+            return category
+
+    raise CategoryError(f'カテゴリ「{name}」が見つかりません。')
+
+
+def category_usage(data: LedgerData) -> dict[str, Counter[str]]:
+    """カテゴリごとの使用件数を返す（キーは transactions / rules / allocations、合計は Counter.total()）
+
+    Args:
+        data: 対象の LedgerData
+    """
+    usage: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    for kind, items in (
+        ('transactions', data.transactions),
+        ('rules', data.merchant_rules),
+        ('allocations', data.allocations),
+    ):
+        for item in items:
+            usage[item.category][kind] += 1
+
+    return usage
+
+
+def add_category(data: LedgerData, name: str, description: str = '') -> Category:
+    """カテゴリを末尾に追加する（空文字・重複は CategoryError）
+
+    Args:
+        data: 対象の LedgerData
+        name: カテゴリ名
+        description: Jev に渡す説明（任意）
+    """
+    name = normalize_merchant(name)  # カテゴリ名も加盟店名と同じ規則（NFKC・空白整理）で正規化する
+    if not name:
+        raise CategoryError('カテゴリ名を入力してください。')
+
+    if any(normalize_merchant(c.category) == name for c in data.categories):  # シート上の未正規化名とも比較
+        raise CategoryError(f'カテゴリ「{name}」は既に存在します。')
+
+    max_order = max((c.sort_order for c in data.categories), default=0)
+    category = Category(category=name, sort_order=max_order + 1, description=description.strip())
+    data.categories.append(category)
+    return category
+
+
+def edit_category(data: LedgerData, name: str, new_name: str, description: str) -> int:
+    """カテゴリの名称と説明を変更する（検証をすべて通ってから書き換え、名称変更は明細・ルール・内訳にも伝播）
+
+    Args:
+        data: 対象の LedgerData
+        name: 現在のカテゴリ名
+        new_name: 新しいカテゴリ名（正規化後に現在名と同じなら説明だけ更新）
+        description: Jev に渡す説明（名称変更時に空なら旧名の既定説明を引き継ぐ）
+
+    Returns:
+        名称変更を伝播した件数（明細 + ルール + 内訳。説明だけの更新なら 0）
+    """
+    category = require_category(data, name)
+    new_name = normalize_merchant(new_name)
+    if not new_name:
+        raise CategoryError('カテゴリ名を入力してください。')
+
+    renaming = new_name != normalize_merchant(name)  # シート上の名前が未正規化でも説明だけの保存を名称変更にしない
+    if renaming and name == FALLBACK_CATEGORY:
+        raise CategoryError(f'「{FALLBACK_CATEGORY}」は分類エラー時の受け皿として使うため名称変更できません。')
+
+    if renaming and any(normalize_merchant(c.category) == new_name for c in data.categories):
+        raise CategoryError(f'カテゴリ「{new_name}」は既に存在します。')
+
+    category.description = description.strip()
+    if not renaming:
+        return 0
+
+    category.description = category.description or CATEGORY_DESCRIPTIONS.get(name, '')  # 既定説明は旧名にしか紐づかない
+    category.category = new_name
+    changed = 0
+    for item in (*data.transactions, *data.merchant_rules, *data.allocations):
+        if item.category == name:
+            item.category = new_name
+            changed += 1
+
+    return changed
+
+
+def move_category(data: LedgerData, name: str, delta: int) -> None:
+    """カテゴリの表示順を delta だけ動かす（隣と入れ替える。端にあって動かせない場合は CategoryError で保存させない）
+
+    Args:
+        data: 対象の LedgerData
+        name: カテゴリ名
+        delta: -1 で上へ、+1 で下へ
+    """
+    ordered = data.sorted_categories()
+    index = ordered.index(require_category(data, name))
+    target = index + delta
+    if target < 0 or target >= len(ordered):
+        raise CategoryError('既に端にあるため並び順は変わりません。')
+
+    ordered[index], ordered[target] = ordered[target], ordered[index]
+    for order, category in enumerate(ordered, start=1):
+        category.sort_order = order
+
+
+def delete_category(data: LedgerData, name: str) -> None:
+    """カテゴリを削除する（フォールバック・使用中・存在しない場合は CategoryError）
+
+    Args:
+        data: 対象の LedgerData
+        name: カテゴリ名
+    """
+    category = require_category(data, name)
+    if name == FALLBACK_CATEGORY:
+        raise CategoryError(f'「{FALLBACK_CATEGORY}」は分類エラー時の受け皿として使うため削除できません。')
+
+    usage = category_usage(data)[name]
+    if usage.total():
+        raise CategoryError(
+            f'カテゴリ「{name}」は使用中のため削除できません'
+            f'(明細 {usage["transactions"]} 件、ルール {usage["rules"]} 件、内訳 {usage["allocations"]} 件)。'
+            '先に別カテゴリへ変更してください。'
+        )
+
+    data.categories.remove(category)

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}カテゴリ管理{% endblock %}
+{% block content %}
+<h1>カテゴリ管理</h1>
+<p class="hint">カテゴリの追加・名称変更・並び替えができます。名称を変えると既存の明細・ルール・内訳にも反映されます。「説明」は Jev が分類するときの判断材料になります。使用中のカテゴリと「{{ fallback }}」は削除できません。</p>
+
+<section class="card">
+  <h2>カテゴリを追加</h2>
+  <form method="post" action="{{ url_for('ledger.add_category_route') }}" class="filters">
+    <label>カテゴリ名 <input type="text" name="name" required placeholder="例: ペット"></label>
+    <label>説明(Jev 向け・任意) <input type="text" name="description" placeholder="例: フード・トリミング・動物病院"></label>
+    <button class="btn btn-primary" type="submit">追加</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>登録済み <span class="count">{{ categories|length }} 件</span></h2>
+  <ul class="category-list">
+    {% for c in categories %}
+    {% set use = usage[c.category] %}
+    <li class="category-item">
+      <form method="post" action="{{ url_for('ledger.move_category_route') }}" class="category-order">
+        <input type="hidden" name="category" value="{{ c.category }}">
+        <button class="btn btn-sm" type="submit" name="direction" value="up" {{ 'disabled' if loop.first }} aria-label="上へ">↑</button>
+        <button class="btn btn-sm" type="submit" name="direction" value="down" {{ 'disabled' if loop.last }} aria-label="下へ">↓</button>
+      </form>
+      <form method="post" action="{{ url_for('ledger.edit_category_route') }}" class="category-edit">
+        <input type="hidden" name="category" value="{{ c.category }}">
+        <input type="text" name="new_name" value="{{ c.category }}" required {{ 'readonly' if c.category == fallback }} aria-label="カテゴリ名">
+        <input type="text" name="description" value="{{ c.description }}" placeholder="{{ default_descriptions.get(c.category, '説明(任意)') }}" aria-label="説明">
+        <button class="btn btn-sm" type="submit">保存</button>
+      </form>
+      <div class="category-meta">
+        <span class="muted small">明細 {{ use['transactions'] }} / ルール {{ use['rules'] }} / 内訳 {{ use['allocations'] }}</span>
+        {% if c.category != fallback and use.total() == 0 %}
+        <form method="post" action="{{ url_for('ledger.delete_category_route') }}" class="inline" onsubmit="return confirm('このカテゴリを削除しますか?')">
+          <input type="hidden" name="category" value="{{ c.category }}">
+          <button class="btn btn-sm btn-danger" type="submit">削除</button>
+        </form>
+        {% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endblock %}

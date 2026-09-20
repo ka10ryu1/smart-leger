@@ -1,7 +1,7 @@
 # Smart Ledger
 
 クレジットカード会社の Web サイトからダウンロードした **利用明細 CSV** を取り込み、
-明細を正規化・重複除外し、加盟店ルールと TypeSafe AI の **Jev** で 10 カテゴリに分類、
+明細を正規化・重複除外し、加盟店ルールと TypeSafe AI の **Jev** でカテゴリ(初期値 10 種、画面から追加可)に分類、
 **Excel(`data/household.xlsx`)を正本として永続化** し、ブラウザから家計簿として閲覧・修正できる
 個人用 Web アプリです。
 
@@ -20,13 +20,14 @@
 | 要確認 | confidence < 0.85、Jev エラー、未分類の明細。その場でカテゴリ確定 |
 | 明細編集 | カテゴリ変更(今回だけ / 今後この加盟店も)、メモ、**内訳分割(allocations)** |
 | ルール | 加盟店ルール(merchant_rules)の一覧・追加・削除 |
+| カテゴリ | カテゴリの追加・名称変更・並び替え・削除。名称変更は明細・ルール・内訳に伝播。Jev 向けの説明文も編集できる |
 
 ### 分類の流れ
 
 ```
 新規明細 → 加盟店名正規化(NFKC・空白整理)
         → merchant_rules を検索 ── 一致 → category(source=rule)
-        → 不一致 → Jev(choice)で 10 カテゴリから 1 つ選択 → category + confidence(source=jev)
+        → 不一致 → Jev(choice)で登録カテゴリから 1 つ選択 → category + confidence(source=jev)
               confidence >= 0.85 → 自動採用
               confidence <  0.85 → 「要確認」
         → Jev エラー / API キー未設定 → category=その他, source=error, 「要確認」(取込は継続)
@@ -155,13 +156,14 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 | --- | --- |
 | `transactions` | `id`, `usage_date`, `merchant_raw`, `merchant_normalized`, `amount`, `category`, `confidence`, `classification_source`, `card`, `import_id`, `imported_at`, `row_key`, `memo` |
 | `merchant_rules` | `merchant_pattern`, `category`, `created_at` |
-| `categories` | `category`, `sort_order` |
+| `categories` | `category`, `sort_order`, `description` |
 | `imports` | `import_id`, `filename`, `file_hash`, `imported_at`, `card`, `row_count` |
 | `allocations` | `transaction_id`, `category`, `amount`, `memo` |
 
 - `merchant_raw` は CSV の元の表記をそのまま保持し、`merchant_normalized` は NFKC 正規化・前後空白除去・連続空白整理後の値
 - `classification_source` は `rule` / `jev` / `manual` / `error`。`confidence` は `jev` のときのみ値が入ります
-- `categories` シートの行を増やせばカテゴリを追加できます(MVP 初期値は 10 カテゴリ)
+- カテゴリは **カテゴリ** 画面から追加・名称変更・並び替え・削除できます(初期値は 10 カテゴリ)。`description` は Jev がカテゴリを選ぶときの説明文で、空なら組み込みの既定説明、それも無ければカテゴリ名を使います
+- 名称変更は `transactions` / `merchant_rules` / `allocations` の `category` にも反映されます(名称変更時に説明が空なら旧名の既定説明を引き継ぎます)。使用中のカテゴリと「その他」(分類エラー時の受け皿)は削除できません
 
 ### カテゴリ(初期値)
 
@@ -279,6 +281,7 @@ smart-ledger/
 - Jev が不明なカテゴリを返したときの要確認化、429 の再試行、確定再試行時のキャッシュ再利用
 - Excel ロック時に正本が変わらないこと、`=` 始まりの文字列が数式にならないこと、不完全行の読み飛ばし
 - 別カードの同一明細を重複扱いしないこと、外部 URL への戻り先と別サイトからの POST の拒否
+- カテゴリ管理(追加・名称変更の明細 / ルール / 内訳への伝播・並び替え・使用中と「その他」の削除ガード)
 - ログのカード番号 / Bearer マスク、Excel セルの日付表現(`2026/8/1` 等)、空行挿入ツール
 
 ### 実 API を使うライブテスト
