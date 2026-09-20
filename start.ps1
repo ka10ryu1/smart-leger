@@ -37,6 +37,10 @@ try {
     }
 
     Write-Host "Smart Ledger を起動します: http://localhost:$port  (終了は Ctrl+C)" -ForegroundColor Cyan
+    if ($PSScriptRoot -like "\\*") {
+        # \\wsl.localhost\... などネットワーク越しのフォルダでは .venv の読み込みが極端に遅くなる
+        Write-Host "注意: ネットワーク上のフォルダ($PSScriptRoot)から起動しています。ライブラリの読み込みに数分かかることがあります。Windows のローカルディスク(例: C:\Users\<名前>\smart-leger)に置くと数秒で起動します。" -ForegroundColor Yellow
+    }
     $env:PYTHONUTF8 = "1"
     # Flask/werkzeug は stderr にも出力するため、実行中は Stop にしない
     $ErrorActionPreference = "Continue"
