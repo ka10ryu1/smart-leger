@@ -18,6 +18,7 @@ from ..constants import SOURCE_ERROR, SOURCE_RULE
 from ..models import ImportRecord, LedgerData, Transaction, new_id, now_iso
 from .classifier import ClassificationPipeline
 from .csv_parser import parse_statement_bytes
+from .merchant_rules import prepare_rules
 
 logger = logging.getLogger(__name__)
 
@@ -218,6 +219,7 @@ class Importer:
         categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
         import_id = new_id('imp')
         imported_at = now_iso()
+        prepared_rules = prepare_rules(data.merchant_rules)
 
         counts = {'imported': 0, 'dup': 0, 'auto': 0, 'review': 0, 'errors': 0, 'rules': 0}
         months: set[str] = set()
@@ -227,9 +229,7 @@ class Importer:
                 continue
 
             usage_date = date.fromisoformat(row.usage_date)
-            result = self.pipeline.classify(
-                row.merchant_normalized, row.amount, usage_date, categories, data.merchant_rules
-            )
+            result = self.pipeline.classify(row.merchant_normalized, row.amount, usage_date, categories, prepared_rules)
             tx = Transaction(
                 id=new_id('tx'),
                 usage_date=usage_date,

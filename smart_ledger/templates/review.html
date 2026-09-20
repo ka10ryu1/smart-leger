@@ -27,6 +27,7 @@
       </select>
       <label class="radio"><input type="radio" name="scope" value="once" checked> 今回だけ</label>
       <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店も</label>
+      <input type="text" name="rule_pattern" value="{{ t.merchant_normalized|rule_pattern }}" class="rule-pattern-input" aria-label="ルールのパターン" title="「今後この加盟店も」で登録するパターン(請求月は除いてあります)">
       <button class="btn btn-primary btn-sm" type="submit">確定</button>
       <a class="btn btn-sm" href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=url_for('ledger.review')) }}">詳細・内訳</a>
     </form>

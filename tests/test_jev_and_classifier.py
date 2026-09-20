@@ -9,10 +9,16 @@ from typing import Callable
 import httpx
 import pytest
 
-from smart_ledger.models import MerchantRule
+from smart_ledger.models import LedgerData, MerchantRule, Transaction
 from smart_ledger.services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from smart_ledger.services.jev_client import JevClient, JevError, build_request_body, parse_choice_response
-from smart_ledger.services.merchant_rules import match_rule
+from smart_ledger.services.merchant_rules import (
+    match_rule,
+    prepare_rules,
+    preview_rule_targets,
+    rule_targets,
+    upsert_rule,
+)
 
 
 def make_client(handler: Callable[[httpx.Request], httpx.Response], retries: int = 0) -> JevClient:
@@ -202,7 +208,9 @@ def test_rule_takes_precedence_over_jev(criteria: dict[str, str]) -> None:
         return choice_response('食費', 0.99)
 
     pipeline = ClassificationPipeline(JevClassifier(make_client(handler)), threshold=0.85)
-    result = pipeline.classify('KYASH', 10000, date(2026, 8, 15), criteria, [MerchantRule('KYASH', 'その他')])
+    result = pipeline.classify(
+        'KYASH', 10000, date(2026, 8, 15), criteria, prepare_rules([MerchantRule('KYASH', 'その他')])
+    )
     assert result.source == 'rule'
     assert result.category == 'その他'
     assert result.confidence is None
@@ -329,7 +337,7 @@ def test_parse_choice_response_probability_fallback_is_validated() -> None:
 
 
 @pytest.mark.parametrize('raw', [0, 1, 0.85, '0.5'])
-def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
+def test_parse_choice_response_accepts_boundary_confidence(raw: int | float | str) -> None:
     """0 と 1 を含む範囲内の confidence はそのまま受け入れる
 
     Args:
@@ -337,3 +345,65 @@ def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
     """
     payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
     assert parse_choice_response(payload).confidence == pytest.approx(float(raw))
+
+
+def test_match_rule_ignores_billing_month_tokens() -> None:
+    """「6ガツブン ○○」のルールが「7ガツブン ○○」にも一致し、年月付きの電力会社も同一視される"""
+    rules = [
+        MerchantRule('6ガツブン エ-ユ-デンワリヨウリヨウ', '通信'),
+        MerchantRule('トウキヨウデンリヨク26ネン07ガツ', '住居・光熱'),
+    ]
+    assert matched_category(rules, '7ガツブン エ-ユ-デンワリヨウリヨウ') == '通信'
+    assert matched_category(rules, 'トウキヨウデンリヨク26ネン08ガツ') == '住居・光熱'
+    assert matched_category(rules, 'エ-ユ-デンワリヨウリヨウ') == '通信'
+    assert match_rule(rules, 'カンサイデンリヨク26ネン08ガツ') is None
+
+
+def test_match_rule_partial_pattern_covers_varying_station_names() -> None:
+    """「オートチャージ」のような共通部分のパターンは駅名が違っても部分一致し、請求月付きの部分パターンもキーで部分一致する"""
+    rules = [MerchantRule('オートチャージ', '交通'), MerchantRule('7ガツブン エ-ユ-', '通信')]
+    assert matched_category(rules, '北松戸駅 オートチャージ(リンク)') == '交通'
+    assert matched_category(rules, '京成電鉄 新津田沼駅 オートチャージ(リンク)') == '交通'
+    assert matched_category(rules, '8ガツブン エ-ユ-デンワリヨウリヨウ') == '通信'
+
+
+def test_upsert_rule_merges_rules_with_same_merchant_key() -> None:
+    """同じ加盟店キーのルールが複数あれば、先頭をパターン・カテゴリごと更新し、残りは削除される"""
+    data = LedgerData(
+        merchant_rules=[
+            MerchantRule('7ガツブン X', '通信'),
+            MerchantRule('Y', '外食'),
+            MerchantRule('8ガツブン X', '外食'),
+        ]
+    )
+    rule = upsert_rule(data, 'X', '住居・光熱')
+    assert [(r.merchant_pattern, r.category) for r in data.merchant_rules] == [('X', '住居・光熱'), ('Y', '外食')]
+    assert data.merchant_rules[0] is rule
+
+
+def test_preview_rule_targets_matches_actual_upsert() -> None:
+    """登録前の件数プレビューは、旧パターン・重複ルールが残る状態ではなく upsert_rule 後と同じ判定になる"""
+    data = LedgerData(
+        merchant_rules=[
+            MerchantRule('テストデンリヨク 8ガツブン', '食費'),
+            MerchantRule('デンリヨク ホンシヤ', '外食'),
+        ],
+        transactions=[
+            Transaction('t1', date(2026, 8, 1), 'a', 'テストデンリヨク ホンシヤ', 100, category='外食'),
+            Transaction('t2', date(2026, 9, 1), 'b', 'テストデンリヨク 9ガツブン', 100, category=''),
+        ],
+    )
+    previewed = [t.id for t in preview_rule_targets(data, 'テストデンリヨク', 'none')]
+    rule = upsert_rule(data, 'テストデンリヨク', '住居・光熱')
+    actual = [t.id for t in rule_targets(data.transactions, data.merchant_rules, rule, 'none')]
+    assert previewed == actual == ['t2']  # t1 は長い部分一致「デンリヨク ホンシヤ」が勝つ
+
+
+def test_match_rule_prefers_exact_over_key_match_regardless_of_order() -> None:
+    """完全一致のルールは、先に登録されたキー一致のルールより優先される"""
+    rules = [
+        MerchantRule('エ-ユ-デンワリヨウリヨウ', '通信'),
+        MerchantRule('7ガツブン エ-ユ-デンワリヨウリヨウ', '外食'),
+    ]
+    assert matched_category(rules, '7ガツブン エ-ユ-デンワリヨウリヨウ') == '外食'
+    assert matched_category(rules, '8ガツブン エ-ユ-デンワリヨウリヨウ') == '通信'

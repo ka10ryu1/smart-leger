@@ -26,8 +26,12 @@
     </label>
     <div class="radio-group">
       <label class="radio"><input type="radio" name="scope" value="once" checked> 今回だけ変更</label>
-      <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店は同じカテゴリ(ルール登録){% if same_merchant_count %} <small class="muted">/ 同じ加盟店の明細 {{ same_merchant_count }} 件にも適用</small>{% endif %}</label>
+      <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店は同じカテゴリ(ルール登録) <small class="muted">/ パターンに一致する明細が他に <span id="rule-preview-count" data-url="{{ url_for('ledger.rule_preview', tx_id=tx.id) }}">{{ same_merchant_count }}</span> 件</small></label>
     </div>
+    <label>ルールのパターン(「今後この加盟店も」を選んだとき)
+      <input type="text" name="rule_pattern" id="rule-pattern" value="{{ tx.merchant_normalized|rule_pattern }}" placeholder="例: エ-ユ-デンワリヨウリヨウ">
+      <small class="muted">請求月(「7ガツブン」「26ネン08ガツ」など)は自動で除いてあります。駅名が変わる明細は「オートチャージ」のように共通部分だけ残すと部分一致で効きます。</small>
+    </label>
     <label>メモ
       <input type="text" name="memo" value="{{ tx.memo }}" placeholder="任意">
     </label>
