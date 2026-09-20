@@ -68,7 +68,10 @@
 </section>
 
 <section class="card">
-  <h2>直近 6 か月の推移</h2>
+  <div class="card-head">
+    <h2>直近 6 か月の推移</h2>
+    <a class="btn btn-sm" href="{{ url_for('ledger.annual', year=month[:4]|int) }}">年間表</a>
+  </div>
   {% set max_total = trend|map(attribute=1)|max %}
   <div class="trend">
     {% for m, total in trend %}

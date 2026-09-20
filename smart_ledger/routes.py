@@ -1,4 +1,4 @@
-"""Flask ルーティング（画面: ダッシュボード / 明細一覧 / CSV 取込 / 要確認 / 明細編集 / ルール）"""
+"""Flask ルーティング（画面: ダッシュボード / 年間表 / 明細一覧 / CSV 取込 / 要確認 / 明細編集 / ルール / カテゴリ）"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from flask import (
     Blueprint,
+    Response,
     abort,
     current_app,
     flash,
@@ -32,7 +33,9 @@ from .constants import (
 )
 from .models import ImportRecord, LedgerData, Transaction, now_iso
 from .services.aggregation import (
+    annual_table,
     available_months,
+    available_years,
     month_label,
     monthly_summary,
     monthly_trend,
@@ -51,6 +54,7 @@ from .services.categories import (
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
+from .services.export import annual_csv, annual_xlsx
 from .services.importer import Importer, ImportUndoSummary, summarize_import, undo_import
 from .services.jev_client import JevClient
 from .services.merchant_rules import delete_rule, match_rule, preview_rule_targets, rule_targets, upsert_rule
@@ -219,6 +223,20 @@ def current_month(data: LedgerData) -> str:
     return months[0] if months else date.today().strftime('%Y-%m')
 
 
+def current_year(data: LedgerData) -> int:
+    """クエリの year（4 桁の数字）を返す（無効なら最新の明細がある年、それも無ければ今年）
+
+    Args:
+        data: 全データ
+    """
+    year = request.args.get('year', '').strip()
+    if len(year) == 4 and year.isdigit():
+        return int(year)
+
+    years = available_years(data.transactions)
+    return years[0] if years else date.today().year
+
+
 def load_data() -> LedgerData:
     """Excel から全データを読み込む"""
     return svc().repo.load()
@@ -282,6 +300,41 @@ def dashboard() -> str:
         months=available_months(data.transactions),
         alloc_ids={a.transaction_id for a in data.allocations},
         has_data=bool(data.transactions),
+    )
+
+
+@bp.route('/annual')
+def annual() -> str:
+    """年間表（対象年の 12 か月 × カテゴリのマトリクス）"""
+    data = load_data()
+    return render_template(
+        'annual.html',
+        table=annual_table(data, current_year(data)),
+        years=available_years(data.transactions),
+        has_data=bool(data.transactions),
+    )
+
+
+@bp.route('/annual/export.<fmt>')
+def annual_export(fmt: str) -> Response:
+    """年間表を CSV / Excel でダウンロードする（月間総支出・カテゴリ別の両方を 1 枚の表に含む）
+
+    Args:
+        fmt: 'csv' または 'xlsx'（それ以外は 404）
+    """
+    if fmt == 'csv':
+        build, mimetype = annual_csv, 'text/csv; charset=utf-8'
+    elif fmt == 'xlsx':
+        build, mimetype = annual_xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    else:
+        abort(404)
+
+    data = load_data()
+    year = current_year(data)
+    body = build(annual_table(data, year))
+    logger.info('annual table exported: year=%d format=%s bytes=%d', year, fmt, len(body))
+    return Response(
+        body, mimetype=mimetype, headers={'Content-Disposition': f'attachment; filename="smart_ledger_{year}.{fmt}"'}
     )
 
 

@@ -1,4 +1,4 @@
-"""月次集計と内訳（allocations）のテスト"""
+"""月次・年間集計と内訳（allocations）のテスト"""
 
 from __future__ import annotations
 
@@ -7,7 +7,14 @@ from datetime import date
 import pytest
 
 from smart_ledger.models import Allocation, Category, LedgerData, Transaction
-from smart_ledger.services.aggregation import monthly_summary, shift_month, total_spending, transactions_in_month
+from smart_ledger.services.aggregation import (
+    annual_table,
+    available_years,
+    monthly_summary,
+    shift_month,
+    total_spending,
+    transactions_in_month,
+)
 from smart_ledger.services.allocations import AllocationError, AllocationInput, validate_allocations
 
 
@@ -141,3 +148,51 @@ def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> 
     tx = make_tx('k', date(2026, 8, 15), 100, 'その他')
     with pytest.raises(AllocationError, match='0'):
         validate_allocations(tx, [AllocationInput('食費', 100), AllocationInput('外食', 0, 'メモ')], categories)
+
+
+def test_annual_table_matrix_and_totals(categories: list[str]) -> None:
+    """年間表は月ごとのカテゴリ別金額を sort_order 順に並べ、月間総支出は明細金額を 1 回だけ数える
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    kyash = make_tx('k', date(2026, 3, 15), 10000, 'その他', 'KYASH')
+    data = make_ledger(
+        [
+            make_tx('a', date(2026, 1, 5), 1000, '外食'),
+            make_tx('b', date(2026, 1, 20), 2000, '食費'),
+            make_tx('c', date(2026, 12, 31), 3000, '食費'),
+            make_tx('d', date(2025, 12, 31), 9999, '食費'),  # 前年は含まれない
+            make_tx('e', date(2026, 6, 1), 500, ''),  # 未分類は末尾
+            kyash,
+        ],
+        categories,
+        [Allocation('k', '食費', 6000), Allocation('k', '交通', 4000)],
+    )
+    table = annual_table(data, 2026)
+    assert table.year == 2026
+    assert table.months[0] == '2026-01' and table.months[-1] == '2026-12'
+    assert [r.category for r in table.rows] == ['食費', '外食', '交通', '未分類']
+    by_cat = {r.category: r for r in table.rows}
+    assert by_cat['食費'].amounts == [2000, 0, 6000, 0, 0, 0, 0, 0, 0, 0, 0, 3000]
+    assert by_cat['食費'].total == 11000
+    assert by_cat['交通'].amounts[2] == 4000
+    assert 'その他' not in by_cat  # 内訳のある明細は自身のカテゴリでは数えない
+    assert table.monthly_totals == [3000, 0, 10000, 0, 0, 500, 0, 0, 0, 0, 0, 3000]
+    assert table.monthly_counts == [2, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1]
+    assert table.total == 16500 == sum(r.total for r in table.rows)
+
+
+def test_annual_table_empty_year_and_available_years(categories: list[str]) -> None:
+    """明細が無い年は行が空で合計 0、available_years は新しい順
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_ledger(
+        [make_tx('a', date(2024, 5, 1), 100, '食費'), make_tx('b', date(2026, 1, 1), 100, '食費')], categories
+    )
+    assert available_years(data.transactions) == [2026, 2024]
+    assert available_years([]) == []
+    table = annual_table(data, 2025)
+    assert table.rows == [] and table.total == 0 and table.monthly_totals == [0] * 12

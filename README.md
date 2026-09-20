@@ -15,6 +15,7 @@
 | 画面 | 内容 |
 | --- | --- |
 | ダッシュボード | 対象年月の総支出・前月比・カテゴリ別支出と割合・直近 6 か月推移・最近の明細。月切替は `← 前月 / 翌月 →` |
+| 年間表 | 対象年の 12 か月 × カテゴリのマトリクス(右端に年間合計、最下行に月間総支出)と年間総支出・月平均。年切替は `← 前年 / 翌年 →`、金額を押すと該当月・カテゴリの明細一覧へ。CSV / Excel でエクスポート |
 | 明細一覧 | 利用日・加盟店・金額・カテゴリ・分類元(rule / jev / manual / error)・confidence。月・カテゴリ・分類元・加盟店名で絞り込み |
 | CSV 取込 | CSV 選択 → 解析 → プレビュー(新規件数 / 重複件数) → 「取り込む」で新規明細だけ分類して Excel 保存 |
 | 要確認 | confidence < 0.85、Jev エラー、未分類の明細。その場でカテゴリ確定 |
@@ -216,7 +217,13 @@ KYASH 10,000 円
 
 - 内訳が無い明細 → `transactions.category` でカテゴリ集計
 - 内訳がある明細 → **月間総支出では `transactions.amount` を 1 回だけ**、**カテゴリ別集計では `allocations` を使用**
-- 二重計上は発生しません(pytest で検証)
+- 二重計上は発生しません(pytest で検証)。年間表も同じ規則で、月間総支出の行は明細金額、カテゴリの行は内訳で集計します
+
+### 年間表のエクスポート
+
+年間表の「CSV」「Excel」ボタンで、表示中の年のカテゴリ × 月の表(見出し行、カテゴリ行、月間総支出の行。右端が年間合計)をダウンロードできます。
+CSV は BOM 付き UTF-8(Windows の Excel でそのまま開けます)、Excel は 1 シート(`YYYY年`)で金額は 3 桁区切りです。
+ファイル名は `smart_ledger_YYYY.csv` / `smart_ledger_YYYY.xlsx` で、正本の `household.xlsx` には書き込みません。
 
 ### 保存の安全性
 
@@ -275,7 +282,8 @@ smart-ledger/
 │  │  ├─ jev_client.py        # TypeSafe Jev API クライアント(httpx)
 │  │  ├─ classifier.py        # 分類パイプライン(rule → Jev → 閾値)
 │  │  ├─ importer.py          # プレビュー / 確定
-│  │  ├─ aggregation.py       # 月次・カテゴリ集計(usage_date 基準)
+│  │  ├─ aggregation.py       # 月次・年間・カテゴリ集計(usage_date 基準)
+│  │  ├─ export.py            # 年間表の CSV / Excel エクスポート
 │  │  ├─ allocations.py       # 内訳の検証
 │  │  ├─ excel_repository.py  # household.xlsx の読み書き(atomic 保存)
 │  │  └─ backup.py            # 世代バックアップ・Dropbox コピー
@@ -297,7 +305,7 @@ smart-ledger/
 - CSV ヘッダー行検出、CP932 / UTF-8 BOM 読込、払戻額の扱い
 - merchant_normalized(NFKC・空白整理)
 - ファイルハッシュ / row_key による重複検出(同日同加盟店同金額の複数決済を保持)
-- 月次集計が利用日基準であること
+- 月次集計が利用日基準であること、年間表(カテゴリ × 月・年間合計・月間総支出)と CSV / Excel エクスポート
 - merchant rule の適用(完全一致・部分一致・Jev より優先)
 - Jev レスポンス解析、confidence 閾値、API エラー時のフォールバック
 - allocations の二重計上防止・合計チェック

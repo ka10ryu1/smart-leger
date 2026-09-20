@@ -11,6 +11,7 @@
   <a class="brand" href="{{ url_for('ledger.dashboard') }}">Smart Ledger</a>
   <nav class="nav">
     <a href="{{ url_for('ledger.dashboard') }}" class="{{ 'active' if request.endpoint == 'ledger.dashboard' }}">ホーム</a>
+    <a href="{{ url_for('ledger.annual') }}" class="{{ 'active' if request.endpoint == 'ledger.annual' }}">年間</a>
     <a href="{{ url_for('ledger.transactions') }}" class="{{ 'active' if request.endpoint == 'ledger.transactions' }}">明細</a>
     <a href="{{ url_for('ledger.import_page') }}" class="{{ 'active' if request.endpoint and request.endpoint.startswith('ledger.import') }}">取込</a>
     <a href="{{ url_for('ledger.review') }}" class="{{ 'active' if request.endpoint == 'ledger.review' }}">要確認</a>
