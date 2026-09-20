@@ -239,6 +239,20 @@ def test_null_classifier_when_no_api_key(categories: list[str]) -> None:
     assert result.source == 'error' and result.category == 'その他'
 
 
+def matched_category(rules: list[MerchantRule], merchant: str) -> str:
+    """加盟店名に一致したルールのカテゴリを返す（一致しなければテスト失敗）
+
+    Args:
+        rules: 登録済みルール
+        merchant: 照合する加盟店名
+    """
+    rule = match_rule(rules, merchant)
+    if rule is None:
+        pytest.fail(f'ルールに一致しませんでした: {merchant}')
+
+    return rule.category
+
+
 def test_match_rule_exact_partial_and_case() -> None:
     """完全一致優先、部分一致、大文字小文字無視で一致する"""
     rules = [
@@ -246,9 +260,9 @@ def test_match_rule_exact_partial_and_case() -> None:
         MerchantRule('kyash', 'その他'),
         MerchantRule('ＫＹＡＳＨ ＰＲＩＭＥ', '娯楽・サブスク'),
     ]
-    assert match_rule(rules, 'スミトモセイメイホケン(ホケンリヨウ)').category == '保険・税金'
-    assert match_rule(rules, 'KYASH').category == 'その他'
-    assert match_rule(rules, 'KYASH PRIME').category == '娯楽・サブスク'
+    assert matched_category(rules, 'スミトモセイメイホケン(ホケンリヨウ)') == '保険・税金'
+    assert matched_category(rules, 'KYASH') == 'その他'
+    assert matched_category(rules, 'KYASH PRIME') == '娯楽・サブスク'
     assert match_rule(rules, 'セブンイレブン') is None
 
 

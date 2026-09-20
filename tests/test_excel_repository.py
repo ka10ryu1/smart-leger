@@ -130,7 +130,7 @@ def test_load_tolerates_missing_columns(tmp_path: Path) -> None:
     """
     path = tmp_path / 'old.xlsx'
     wb = Workbook()
-    wb.remove(wb.active)
+    wb.remove(wb.worksheets[0])
     ws = wb.create_sheet('transactions')
     ws.append(['id', 'usage_date', 'merchant_raw', 'merchant_normalized', 'amount', 'category'])
     ws.append(['tx_old', '2026-07-01', 'A', 'A', 100, '食費'])

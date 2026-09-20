@@ -140,8 +140,13 @@ def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
     previous = transactions_in_month(data.transactions, shift_month(month, -1))
     total = total_spending(current)
     prev_total = total_spending(previous) if previous else None
-    diff = total - prev_total if prev_total is not None else None
-    diff_ratio = (diff / prev_total) if prev_total else None
+    diff: int | None = None
+    diff_ratio: float | None = None
+    if prev_total is not None:
+        diff = total - prev_total
+        if prev_total:
+            diff_ratio = diff / prev_total
+
     return MonthlySummary(
         month=month,
         total=total,

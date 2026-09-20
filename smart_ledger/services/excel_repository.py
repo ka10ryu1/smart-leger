@@ -171,7 +171,7 @@ class ExcelRepository:
             data: 書き出すデータ
         """
         wb = Workbook()
-        wb.remove(wb.active)
+        wb.remove(wb.worksheets[0])
         sheet_rows: dict[str, list[list[Any]]] = {
             'transactions': [t.to_row() for t in data.transactions],
             'merchant_rules': [r.to_row() for r in data.merchant_rules],
