@@ -54,6 +54,9 @@ cd smart-ledger
 
 ### 2. setup.ps1 を実行
 
+エクスプローラーで **`setup.cmd` をダブルクリック** するのが最も簡単です(実行ポリシーの影響を受けず、終了後もウィンドウが残ります)。
+PowerShell から実行する場合は次のとおりです。
+
 ```powershell
 .\setup.ps1
 ```
@@ -71,6 +74,13 @@ cd smart-ledger
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
+
+#### うまく動かないとき
+
+- **ウィンドウがすぐ閉じる**: `setup.cmd` / `start.cmd` から起動してください。`.ps1` を右クリック → 「PowerShell で実行」した場合、実行ポリシーのエラーはスクリプトが始まる前に出るため一瞬で閉じます。`setup.ps1` 自体は終了時に Enter 待ちをし、実行内容を `logs\setup_YYYYMMDD_HHMMSS.log` に記録します(`-NoPause` で待ちを省略できます)
+- **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行するか、上記の `-ExecutionPolicy Bypass` 付きで実行してください。`git clone` したファイルには付きません
+- **Python 3.12 以上が見つかりません**: `setup.ps1` は `py` ランチャー → `python` → レジストリの順に探し、試した候補をログに出します。Microsoft Store 版 Python でも動作します。python.org 版をインストールする場合は「Add python.exe to PATH」にチェックしてください
+- **pip install に失敗**: ネットワーク・プロキシ設定を確認してください。会社ネットワークでは `pip config set global.proxy http://...` が必要な場合があります
 
 ### 3. .env を設定
 
@@ -106,6 +116,8 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 氏名・会員番号・カード番号は送信しません(そもそも CSV から読み取りません)。
 
 ### 4. start.ps1 で起動
+
+`start.cmd` をダブルクリック、または PowerShell で次を実行します。
 
 ```powershell
 .\start.ps1
@@ -234,7 +246,8 @@ Dropbox/SmartLedger/
 smart-ledger/
 ├─ app.py                     # 起動スクリプト(--open-browser でブラウザを開く)
 ├─ requirements.txt
-├─ setup.ps1 / start.ps1      # Windows PowerShell 用セットアップ・起動
+├─ setup.ps1 / start.ps1      # Windows PowerShell 用セットアップ・起動(logs/setup_*.log に記録)
+├─ setup.cmd / start.cmd      # 上記をダブルクリックで実行するランチャー
 ├─ .env.example               # 設定テンプレート(.env は Git 管理外)
 ├─ smart_ledger/
 │  ├─ __init__.py             # create_app
