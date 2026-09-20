@@ -239,7 +239,7 @@ def test_concurrent_updates_are_serialized(repo: ExcelRepository) -> None:
 
 
 def test_dropbox_backup_names_do_not_collide_within_same_second(tmp_path: Path) -> None:
-    """同一秒内に 2 回コピーしても Dropbox の backup が 2 世代残る
+    """連続して 2 回コピーしても Dropbox の backup が 2 世代残り、内容も上書きされない（同一秒内でも同様）
 
     Args:
         tmp_path: pytest の一時ディレクトリ

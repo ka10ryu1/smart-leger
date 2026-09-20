@@ -46,7 +46,7 @@ def backup_destination(source: Path, backup_dir: Path, now: datetime | None = No
 
 
 def create_generation_backup(source: Path, backup_dir: Path, keep: int = 20) -> Path | None:
-    """正本を backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> にコピーし、古い世代を削除する
+    """正本を backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> にコピーし、古い世代を削除する（名前が重なる場合は backup_destination の規則で変える）
 
     Args:
         source: 正本ファイル
@@ -100,7 +100,7 @@ class DropboxBackup:
         self.keep = keep
 
     def copy(self, source: Path) -> dict[str, Path] | None:
-        """latest/<name> と backup/<stem>_YYYYMMDD_HHMMSS<suffix> にコピーする
+        """latest/<name> と backup/<stem>_YYYYMMDD_HHMMSS<suffix>（重なる場合は backup_destination の規則）にコピーする
 
         正本の保存はすでに成功しているため、失敗しても例外は投げずログに残す
 
