@@ -248,6 +248,9 @@ class ExcelRepository:
         except PermissionError as exc:
             tmp_path.unlink(missing_ok=True)
             raise ExcelLockedError(self.locked_message()) from exc
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise ExcelSaveError(f'Excel の正本置換に失敗しました: {exc}') from exc
 
         logger.info(
             'excel saved: file=%s transactions=%d rules=%d allocations=%d',
@@ -301,6 +304,9 @@ class ExcelRepository:
         except PermissionError as exc:
             tmp_path.unlink(missing_ok=True)
             raise ExcelLockedError(self.locked_message()) from exc
+        except OSError as exc:
+            tmp_path.unlink(missing_ok=True)
+            raise ExcelSaveError(f'Excel の書き込み確認に失敗しました: {exc}') from exc
 
     def locked_message(self) -> str:
         """ロック時にユーザーへ表示するメッセージ"""

@@ -27,6 +27,25 @@ def test_header_detection_missing_raises() -> None:
         find_header_index([['a', 'b'], ['c', 'd']])
 
 
+def test_empty_csv_raises() -> None:
+    """空の CSV は CsvParseError"""
+    with pytest.raises(CsvParseError, match='空'):
+        parse_statement_bytes(b'')
+
+
+def test_undecodable_csv_raises() -> None:
+    """UTF-8 / CP932 のどちらでも読めないバイト列は CsvParseError"""
+    with pytest.raises(CsvParseError, match='文字コード'):
+        decode_bytes(b'\x81\x00')
+
+
+def test_missing_required_column_raises() -> None:
+    """加盟店列などの必須列が無い CSV は CsvParseError"""
+    content = 'ご利用年月日,ご利用額\r\n2026/08/01,100\r\n'.encode()
+    with pytest.raises(CsvParseError, match='必要な列'):
+        parse_statement_bytes(content)
+
+
 def test_decode_cp932(fixture_csv_bytes: bytes) -> None:
     """CP932 の CSV を読める
 
@@ -105,6 +124,24 @@ def test_row_key_stable_across_parses(fixture_csv_bytes: bytes) -> None:
     a = parse_statement_bytes(fixture_csv_bytes)
     b = parse_statement_bytes(fixture_csv_bytes)
     assert [r.row_key for r in a.rows] == [r.row_key for r in b.rows]
+
+
+def test_invalid_amount_is_reported_as_skipped_warning() -> None:
+    """日付は有効だが金額を読めない行は、警告を残してスキップする"""
+    content = 'ご利用年月日,ご利用箇所,ご利用額\r\n2026/08/01,テスト,abc\r\n'.encode()
+    parsed = parse_statement_bytes(content)
+    assert parsed.rows == []
+    assert parsed.skipped_lines == 1
+    assert parsed.warnings == ['2 行目: 金額を読み取れなかったためスキップしました。']
+
+
+def test_usage_amount_takes_precedence_over_refund_amount() -> None:
+    """利用額と払戻額の両方がある場合は利用額を採用する"""
+    content = (
+        'ご利用年月日,ご利用箇所,ご利用額,払戻額\r\n2026/08/01,テスト,100,200\r\n2026/08/02,返金,,200\r\n'
+    ).encode()
+    parsed = parse_statement_bytes(content)
+    assert [row.amount for row in parsed.rows] == [100, -200]
 
 
 @pytest.mark.parametrize(

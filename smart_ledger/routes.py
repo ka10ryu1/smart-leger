@@ -478,10 +478,15 @@ def clear_allocations(tx_id: str) -> WerkzeugResponse:
     Args:
         tx_id: 明細 ID
     """
+
+    def mutate(data: LedgerData) -> None:
+        if data.find_transaction(tx_id) is None:
+            abort(404)
+
+        replace_allocations(data, tx_id, [])
+
     return save_and_redirect(
-        lambda data: replace_allocations(data, tx_id, []),
-        lambda _: '内訳を削除しました。',
-        url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back()),
+        mutate, lambda _: '内訳を削除しました。', url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
     )
 
 

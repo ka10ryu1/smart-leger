@@ -10,7 +10,8 @@ from flask.testing import FlaskClient
 
 from smart_ledger import create_app
 from smart_ledger.config import Config
-from smart_ledger.models import LedgerData, Transaction
+from smart_ledger.models import Allocation, LedgerData, Transaction
+from smart_ledger.services.excel_repository import ExcelLockedError
 
 
 @pytest.fixture
@@ -72,6 +73,56 @@ def test_pages_render(client: FlaskClient) -> None:
         assert client.get(path).status_code == 200
 
     assert client.get('/health').get_json()['app'] == 'smart-ledger'  # app.py の二重起動判定が照合する
+
+
+def test_import_preview_rejects_missing_empty_and_malformed_files(client: FlaskClient) -> None:
+    """ファイル未選択・空ファイル・必要ヘッダー無しは保存せずエラー表示する
+
+    Args:
+        client: テストクライアント
+    """
+    missing = client.post('/import/preview', data={}, follow_redirects=True).get_data(as_text=True)
+    assert 'CSV ファイルを選択してください' in missing
+
+    empty = client.post(
+        '/import/preview',
+        data={'csv_file': (io.BytesIO(b''), 'empty.csv')},
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert '空のファイルです' in empty
+
+    malformed = client.post(
+        '/import/preview',
+        data={'csv_file': (io.BytesIO(b'a,b\r\n1,2\r\n'), 'bad.csv')},
+        content_type='multipart/form-data',
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert 'CSV を解析できませんでした' in malformed
+
+
+def test_import_commit_rejects_unknown_preview_token(client: FlaskClient) -> None:
+    """存在しないプレビュートークンは再選択を促し、データを変更しない
+
+    Args:
+        client: テストクライアント
+    """
+    body = client.post('/import/commit', data={'token': 'unknown'}, follow_redirects=True).get_data(as_text=True)
+    assert 'プレビュー情報が見つかりません' in body
+
+
+def test_excel_locked_error_renders_423(client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Excel を読み込めないときは利用者向けの423エラー画面を返す
+
+    Args:
+        client: テストクライアント
+        monkeypatch: リポジトリ読み込みをロックエラーにする
+    """
+    repo = client.application.extensions['smart_ledger'].repo
+    monkeypatch.setattr(repo, 'load', lambda: (_ for _ in ()).throw(ExcelLockedError('Excel が開かれています')))
+    response = client.get('/')
+    assert response.status_code == 423
+    assert 'Excel を書き込めません' in response.get_data(as_text=True)
 
 
 def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
@@ -197,6 +248,33 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
         follow_redirects=True,
     )
     assert '内訳の金額が数値ではありません' in response.get_data(as_text=True)
+
+
+def test_clear_allocations_requires_existing_transaction(client: FlaskClient) -> None:
+    """存在しない明細 ID の内訳削除は成功表示にせず404にする
+
+    Args:
+        client: テストクライアント
+    """
+    assert client.post('/transactions/not-found/allocations/clear').status_code == 404
+
+
+def test_clear_allocations_removes_existing_rows(client: FlaskClient) -> None:
+    """存在する明細の内訳はすべて削除できる
+
+    Args:
+        client: テストクライアント
+    """
+
+    def add_data(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_alloc', date(2026, 8, 1), 'A', 'A', 100, '食費'))
+        data.allocations.append(Allocation('tx_alloc', '食費', 100))
+
+    repo = client.application.extensions['smart_ledger'].repo
+    repo.update(add_data)
+    body = client.post('/transactions/tx_alloc/allocations/clear', follow_redirects=True).get_data(as_text=True)
+    assert '内訳を削除しました' in body
+    assert repo.load().allocations == []
 
 
 def test_cross_site_post_is_rejected(client: FlaskClient) -> None:
