@@ -358,6 +358,10 @@ $env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
 
 別サイトのページからの POST(CSRF)は、`Origin` / `Referer` のホストがアプリ自身と一致しない場合に 403 で拒否します。
 
+## 今後の予定
+
+次に実装する機能の候補と優先度は [docs/ROADMAP.md](docs/ROADMAP.md) にまとめています。
+
 ## MVP でやらないこと
 
 SQL / SQLite、Docker、WSL 前提、n8n、ユーザー認証、外部公開、Dropbox API、Dropbox → Smart Ledger の逆同期、
