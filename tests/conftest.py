@@ -13,7 +13,12 @@ from smart_ledger.services.excel_repository import ExcelRepository
 
 @pytest.fixture
 def repo(tmp_path: Path) -> ExcelRepository:
-    return ExcelRepository(tmp_path / "household.xlsx", backup_dir=tmp_path / "backup", dropbox=DropboxBackup(None))
+    """一時ディレクトリ上の Excel リポジトリ（Dropbox 無効）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    return ExcelRepository(tmp_path / 'household.xlsx', backup_dir=tmp_path / 'backup', dropbox=DropboxBackup(None))
 
 
 @pytest.fixture
