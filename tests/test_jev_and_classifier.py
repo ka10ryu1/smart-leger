@@ -286,3 +286,34 @@ def test_retry_on_429_then_success(categories: list[str], monkeypatch: pytest.Mo
     result = JevClassifier(make_client(handler, retries=1)).classify('x', 1, date(2026, 1, 1), categories)
     assert result.category == '通信' and result.source == 'jev'
     assert sleeps == [1.0]
+
+
+@pytest.mark.parametrize('raw', ['NaN', 'inf', '-inf', 1.5, -0.1, 'abc'])
+def test_parse_choice_response_rejects_invalid_confidence(raw: object) -> None:
+    """NaN・inf・範囲外・数値でない confidence は None（要確認扱い）になる
+
+    Args:
+        raw: レスポンスに入る不正な confidence
+    """
+    payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
+    choice = parse_choice_response(payload)
+    assert choice.confidence is None
+
+
+def test_parse_choice_response_probability_fallback_is_validated() -> None:
+    """confidence が不正なとき probabilities[choice] で補うが、それも範囲外なら None にする"""
+    valid = {'answers': {'category': {'choice': '通信', 'confidence': 1.5, 'probabilities': {'通信': 0.7}}}}
+    assert parse_choice_response(valid).confidence == pytest.approx(0.7)
+    invalid = {'answers': {'category': {'choice': '通信', 'confidence': 'NaN', 'probabilities': {'通信': 2.0}}}}
+    assert parse_choice_response(invalid).confidence is None
+
+
+@pytest.mark.parametrize('raw', [0, 1, 0.85, '0.5'])
+def test_parse_choice_response_accepts_boundary_confidence(raw: object) -> None:
+    """0 と 1 を含む範囲内の confidence はそのまま受け入れる
+
+    Args:
+        raw: レスポンスに入る有効な confidence
+    """
+    payload = {'answers': {'category': {'type': 'choice', 'choice': '通信', 'confidence': raw}}}
+    assert parse_choice_response(payload).confidence == pytest.approx(float(raw))

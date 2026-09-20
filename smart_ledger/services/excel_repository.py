@@ -8,12 +8,16 @@
     5. Dropbox が設定されていれば latest / backup へコピー
 
 Excel が他アプリで開かれてロックされている場合は ExcelLockedError を投げる
+
+Flask の開発サーバーはリクエストをスレッドで並行処理するため、読み込み → 変更 → 保存の一連の流れを
+RLock で直列化し、後から保存したリクエストが先の変更を古いデータで上書きしないようにする
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -107,10 +111,16 @@ class ExcelRepository:
         self.backup_generations = backup_generations
         self.dropbox = dropbox or DropboxBackup(None)
         self.last_dropbox_result: dict[str, Path] | None = None
+        self.lock = threading.RLock()  # load() が save() を呼ぶことがあるので再入可能にする
 
     # ------------------------------------------------------------------ read
     def load(self) -> LedgerData:
         """全シートを読み込む（正本が無ければ初期カテゴリ入りの新規ファイルを作成する）"""
+        with self.lock:
+            return self.load_unlocked()
+
+    def load_unlocked(self) -> LedgerData:
+        """ロックを取らずに全シートを読み込む（呼び出し側がロックを保持している前提）"""
         if not self.excel_path.exists():
             logger.info('excel not found: creating=%s', self.excel_path)
             data = default_ledger()
@@ -207,6 +217,18 @@ class ExcelRepository:
         Returns:
             正本のパス
         """
+        with self.lock:
+            return self.save_unlocked(data)
+
+    def save_unlocked(self, data: LedgerData) -> Path:
+        """ロックを取らずに保存する（呼び出し側がロックを保持している前提）
+
+        Args:
+            data: 保存するデータ
+
+        Returns:
+            正本のパス
+        """
         self.excel_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = self.excel_path.with_name(f'~{self.excel_path.stem}.{os.getpid()}.tmp.xlsx')
         try:
@@ -238,7 +260,7 @@ class ExcelRepository:
         return self.excel_path
 
     def update(self, mutator: Callable[[LedgerData], Any]) -> LedgerData:
-        """読み込み → 変更 → 保存をまとめて行う
+        """読み込み → 変更 → 保存をロック内でまとめて行う（並行リクエストによる上書き消失を防ぐ）
 
         Args:
             mutator: LedgerData を書き換える関数
@@ -246,10 +268,11 @@ class ExcelRepository:
         Returns:
             保存後の LedgerData
         """
-        data = self.load()
-        mutator(data)
-        self.save(data)
-        return data
+        with self.lock:
+            data = self.load_unlocked()
+            mutator(data)
+            self.save_unlocked(data)
+            return data
 
     # --------------------------------------------------------------- helpers
     def verify(self, path: Path) -> None:

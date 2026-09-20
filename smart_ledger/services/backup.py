@@ -19,6 +19,22 @@ def timestamp(now: datetime | None = None) -> str:
     return (now or datetime.now()).strftime('%Y%m%d_%H%M%S')
 
 
+def backup_destination(source: Path, backup_dir: Path, now: datetime | None = None) -> Path:
+    """backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> の未使用パスを返す（同一秒内の衝突時はマイクロ秒を付ける）
+
+    Args:
+        source: 正本ファイル（stem と suffix を使う）
+        backup_dir: バックアップ先ディレクトリ
+        now: 基準時刻（None なら現在時刻）
+    """
+    now = now or datetime.now()
+    dest = backup_dir / f'{source.stem}_{timestamp(now)}{source.suffix}'
+    if dest.exists():
+        dest = backup_dir / f'{source.stem}_{timestamp(now)}_{now.microsecond:06d}{source.suffix}'
+
+    return dest
+
+
 def create_generation_backup(source: Path, backup_dir: Path, keep: int = 20) -> Path | None:
     """正本を backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> にコピーし、古い世代を削除する
 
@@ -34,10 +50,7 @@ def create_generation_backup(source: Path, backup_dir: Path, keep: int = 20) -> 
         return None
 
     backup_dir.mkdir(parents=True, exist_ok=True)
-    dest = backup_dir / f'{source.stem}_{timestamp()}{source.suffix}'
-    if dest.exists():  # 同一秒内の連続保存
-        dest = backup_dir / f'{source.stem}_{timestamp()}_{datetime.now().microsecond:06d}{source.suffix}'
-
+    dest = backup_destination(source, backup_dir)
     shutil.copy2(source, dest)
     prune_backups(backup_dir, source.stem, source.suffix, keep)
     logger.info('generation backup created: file=%s', dest.name)
@@ -97,7 +110,7 @@ class DropboxBackup:
             latest_dir.mkdir(parents=True, exist_ok=True)
             backup_dir.mkdir(parents=True, exist_ok=True)
             latest = latest_dir / source.name
-            backup = backup_dir / f'{source.stem}_{timestamp()}{source.suffix}'
+            backup = backup_destination(source, backup_dir)
             tmp_latest = latest_dir / f'~{source.name}.tmp'
             shutil.copy2(source, tmp_latest)
             tmp_latest.replace(latest)
