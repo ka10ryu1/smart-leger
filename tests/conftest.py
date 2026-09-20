@@ -7,6 +7,13 @@ from pathlib import Path
 import pytest
 
 from smart_ledger.config import Config
+from smart_ledger.services.backup import DropboxBackup
+from smart_ledger.services.excel_repository import ExcelRepository
+
+
+@pytest.fixture
+def repo(tmp_path: Path) -> ExcelRepository:
+    return ExcelRepository(tmp_path / "household.xlsx", backup_dir=tmp_path / "backup", dropbox=DropboxBackup(None))
 
 
 @pytest.fixture
