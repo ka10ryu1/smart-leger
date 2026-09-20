@@ -368,3 +368,21 @@ def test_import_undo_then_reimport(client: FlaskClient, fixture_csv_bytes: bytes
     assert '10 件を取り込む' in upload(client, fixture_csv_bytes)
     body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
     assert '取込履歴が見つかりません' in body
+
+
+def test_import_undo_confirm_text_is_attribute_safe(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """ファイル名に引用符があっても確認文言は data-confirm 属性にエスケープされて描画され、取り消せる
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    # " はテストクライアントのマルチパート解析でファイル名が途中で切れるため、JS 文字列を壊す ' だけを使う
+    token = upload(client, fixture_csv_bytes, "it's.csv").split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token}, follow_redirects=True)
+    history = client.get('/import').get_data(as_text=True)
+    assert 'onsubmit=' not in history.split('取込履歴')[1]
+    assert 'data-confirm="取込「it&#39;s.csv」(10 件)を取り消しますか?' in history
+    import_id = history.split('/undo"')[0].rsplit('/import/', 1)[1]
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '明細 10 件を削除しました' in body

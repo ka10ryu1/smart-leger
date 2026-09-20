@@ -1,9 +1,13 @@
 {% extends "base.html" %}
 {% block title %}CSV 取込{% endblock %}
-{# 取り消しボタン: 手動修正・内訳がある場合は件数を確認ダイアログに出す #}
-{% macro undo_form(imp, s) -%}
-<form method="post" action="{{ url_for('ledger.import_undo', import_id=imp.import_id) }}" class="inline"
-      onsubmit="return confirm('取込「{{ imp.filename }}」({{ s.transactions }} 件)を取り消しますか?{% if s.manual_edits %}\n手動で変更したカテゴリ・メモ {{ s.manual_edits }} 件が失われます。{% endif %}{% if s.allocations %}\n内訳 {{ s.allocations }} 件も削除されます。{% endif %}\n加盟店ルールは残ります。')">
+{# 取り消しボタン: 確認文言は data-confirm 属性に置き、app.js の共通ハンドラで confirm する
+   (ファイル名を JS 文字列に直接埋め込むと ' で壊れて確認なしで送信されるため)。手動修正・内訳がある場合は件数も出す #}
+{% macro undo_form(imp, summary) -%}
+{% set lines = ['取込「' ~ imp.filename ~ '」(' ~ summary.transactions ~ ' 件)を取り消しますか?'] %}
+{% if summary.manual_edits %}{% set lines = lines + ['手動で変更したカテゴリ・メモ ' ~ summary.manual_edits ~ ' 件が失われます。'] %}{% endif %}
+{% if summary.allocations %}{% set lines = lines + ['内訳 ' ~ summary.allocations ~ ' 件も削除されます。'] %}{% endif %}
+{% set lines = lines + ['加盟店ルールは残ります。'] %}
+<form method="post" action="{{ url_for('ledger.import_undo', import_id=imp.import_id) }}" class="inline" data-confirm="{{ lines|join('\n') }}">
   <button class="btn btn-sm btn-danger" type="submit">取り消す</button>
 </form>
 {%- endmacro %}
