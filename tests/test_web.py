@@ -177,9 +177,9 @@ def test_category_management_flow(client: FlaskClient) -> None:
         client: テストクライアント
     """
     body = client.post(
-        '/categories/add', data={'name': 'ペット', 'description': 'フード・動物病院'}, follow_redirects=True
+        '/categories/add', data={'name': '　ペット ', 'description': 'フード・動物病院'}, follow_redirects=True
     ).get_data(as_text=True)
-    assert 'カテゴリ「ペット」を追加しました' in body
+    assert 'カテゴリ「ペット」を追加しました' in body  # 正規化後の名前で表示される
     assert 'フード・動物病院' in body
 
     body = client.post('/categories/add', data={'name': 'ペット'}, follow_redirects=True).get_data(as_text=True)
@@ -192,14 +192,18 @@ def test_category_management_flow(client: FlaskClient) -> None:
         data={'category': 'ペット', 'new_name': 'ペット用品', 'description': ''},
         follow_redirects=True,
     ).get_data(as_text=True)
-    assert 'カテゴリ「ペット用品」を保存しました' in body
-    assert '1 件に反映しました' in body
+    assert '名称変更を明細・ルール・内訳の 1 件に反映しました' in body
     assert 'ペット用品' in client.get('/rules').get_data(as_text=True)
 
     body = client.post(
         '/categories/move', data={'category': 'ペット用品', 'direction': 'up'}, follow_redirects=True
     ).get_data(as_text=True)
     assert '並び順を変更しました' in body
+
+    body = client.post(
+        '/categories/move', data={'category': 'その他', 'direction': 'down'}, follow_redirects=True
+    ).get_data(as_text=True)
+    assert '既に端にあるため並び順は変わりません' in body
 
     body = client.post('/categories/delete', data={'category': 'ペット用品'}, follow_redirects=True).get_data(
         as_text=True

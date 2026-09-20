@@ -594,63 +594,77 @@ def categories_page() -> str:
     )
 
 
-def apply_category_change(mutator: Callable[[LedgerData], object], success: str) -> WerkzeugResponse:
+def apply_category_change[T](
+    mutator: Callable[[LedgerData], T], message: Callable[[T], tuple[str, str]]
+) -> WerkzeugResponse:
     """カテゴリ操作を保存し、結果を flash してカテゴリ画面へ戻る
 
     Args:
-        mutator: LedgerData を書き換える関数（CategoryError で失敗を通知する）
-        success: 成功時に表示するメッセージ
+        mutator: LedgerData を書き換えて結果を返す関数（失敗は CategoryError）
+        message: mutator の戻り値から (flash 文言, flash 種別) を作る関数
+
+    Returns:
+        カテゴリ画面へのリダイレクト
     """
+    results: list[T] = []
     try:
-        svc().repo.update(mutator)
+        svc().repo.update(lambda data: results.append(mutator(data)))
     except CategoryError as exc:
         flash(str(exc), 'error')
         return redirect(url_for('ledger.categories_page'))
 
-    flash(success, 'success')
+    text, kind = message(results[0])
+    flash(text, kind)
     return redirect(url_for('ledger.categories_page'))
 
 
 @bp.route('/categories/add', methods=['POST'])
 def add_category_route() -> WerkzeugResponse:
-    """カテゴリを追加する"""
+    """カテゴリを追加する（メッセージには正規化後の名前を使う）"""
     name = request.form.get('name', '')
     description = request.form.get('description', '')
     return apply_category_change(
-        lambda data: add_category(data, name, description), f'カテゴリ「{name.strip()}」を追加しました。'
+        lambda data: add_category(data, name, description),
+        lambda added: (f'カテゴリ「{added.category}」を追加しました。', 'success'),
     )
 
 
 @bp.route('/categories/edit', methods=['POST'])
 def edit_category_route() -> WerkzeugResponse:
-    """カテゴリの名称・説明を変更する（名称変更は明細・ルール・内訳に伝播）"""
+    """カテゴリの名称・説明を変更する（名称変更は明細・ルール・内訳に伝播し、件数を表示する）"""
     name = request.form.get('category', '')
     new_name = request.form.get('new_name', '')
     description = request.form.get('description', '')
-    changed: list[int] = []
-    response = apply_category_change(
-        lambda data: changed.append(edit_category(data, name, new_name, description)),
-        f'カテゴリ「{new_name.strip()}」を保存しました。',
-    )
-    if changed and changed[0]:
-        flash(f'名称変更を明細・ルール・内訳の {changed[0]} 件に反映しました。', 'info')
 
-    return response
+    def message(changed: int) -> tuple[str, str]:
+        if changed:
+            return f'カテゴリを保存し、名称変更を明細・ルール・内訳の {changed} 件に反映しました。', 'success'
+
+        return 'カテゴリを保存しました。', 'success'
+
+    return apply_category_change(lambda data: edit_category(data, name, new_name, description), message)
 
 
 @bp.route('/categories/move', methods=['POST'])
 def move_category_route() -> WerkzeugResponse:
-    """カテゴリの表示順を上下に動かす"""
+    """カテゴリの表示順を上下に動かす（端にあって動かない場合はその旨を表示）"""
     name = request.form.get('category', '')
     delta = -1 if request.form.get('direction') == 'up' else 1
-    return apply_category_change(lambda data: move_category(data, name, delta), '並び順を変更しました。')
+    return apply_category_change(
+        lambda data: move_category(data, name, delta),
+        lambda moved: (
+            ('並び順を変更しました。', 'success') if moved else ('既に端にあるため並び順は変わりません。', 'info')
+        ),
+    )
 
 
 @bp.route('/categories/delete', methods=['POST'])
 def delete_category_route() -> WerkzeugResponse:
     """未使用のカテゴリを削除する"""
     name = request.form.get('category', '')
-    return apply_category_change(lambda data: delete_category(data, name), f'カテゴリ「{name}」を削除しました。')
+    return apply_category_change(
+        lambda data: delete_category(data, name), lambda _: (f'カテゴリ「{name}」を削除しました。', 'success')
+    )
 
 
 @bp.route('/health')

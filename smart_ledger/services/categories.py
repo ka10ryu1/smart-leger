@@ -32,15 +32,6 @@ class CategoryUsage:
         return self.transactions + self.rules + self.allocations
 
 
-def normalize_name(name: str) -> str:
-    """カテゴリ名を正規化する（NFKC・空白整理。加盟店名と同じ規則）
-
-    Args:
-        name: 入力されたカテゴリ名
-    """
-    return normalize_merchant(name)
-
-
 def sorted_categories(data: LedgerData) -> list[Category]:
     """sort_order 順のカテゴリを返す
 
@@ -101,7 +92,7 @@ def add_category(data: LedgerData, name: str, description: str = '') -> Category
         name: カテゴリ名
         description: Jev に渡す説明（任意）
     """
-    name = normalize_name(name)
+    name = normalize_merchant(name)  # カテゴリ名も加盟店名と同じ規則（NFKC・空白整理）で正規化する
     if not name:
         raise CategoryError('カテゴリ名を入力してください。')
 
@@ -115,34 +106,35 @@ def add_category(data: LedgerData, name: str, description: str = '') -> Category
 
 
 def edit_category(data: LedgerData, name: str, new_name: str, description: str) -> int:
-    """カテゴリの名称と説明を変更する（名称変更は明細・ルール・内訳にも伝播）
+    """カテゴリの名称と説明を変更する（検証をすべて通ってから書き換え、名称変更は明細・ルール・内訳にも伝播）
 
     Args:
         data: 対象の LedgerData
         name: 現在のカテゴリ名
-        new_name: 新しいカテゴリ名（同じ名前なら説明だけ更新）
+        new_name: 新しいカテゴリ名（正規化後に同じ名前なら説明だけ更新）
         description: Jev に渡す説明
 
     Returns:
-        名称変更を伝播した件数（明細 + ルール + 内訳）
+        名称変更を伝播した件数（明細 + ルール + 内訳。説明だけの更新なら 0）
     """
     category = find_category(data, name)
     if category is None:
         raise CategoryError(f'カテゴリ「{name}」が見つかりません。')
 
-    new_name = normalize_name(new_name)
+    new_name = normalize_merchant(new_name)
     if not new_name:
         raise CategoryError('カテゴリ名を入力してください。')
 
-    category.description = description.strip()
-    if new_name == name:
-        return 0
-
-    if name == FALLBACK_CATEGORY:
+    renaming = new_name != name
+    if renaming and name == FALLBACK_CATEGORY:
         raise CategoryError(f'「{FALLBACK_CATEGORY}」は分類エラー時の受け皿として使うため名称変更できません。')
 
-    if find_category(data, new_name) is not None:
+    if renaming and find_category(data, new_name) is not None:
         raise CategoryError(f'カテゴリ「{new_name}」は既に存在します。')
+
+    category.description = description.strip()
+    if not renaming:
+        return 0
 
     category.category = new_name
     changed = 0

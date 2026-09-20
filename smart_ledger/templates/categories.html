@@ -17,7 +17,7 @@
   <h2>登録済み <span class="count">{{ categories|length }} 件</span></h2>
   <ul class="category-list">
     {% for c in categories %}
-    {% set use = usage.get(c.category) %}
+    {% set use = usage[c.category] %}
     <li class="category-item">
       <div class="category-order">
         <form method="post" action="{{ url_for('ledger.move_category_route') }}" class="inline">
@@ -36,8 +36,8 @@
         <button class="btn btn-sm" type="submit">保存</button>
       </form>
       <div class="category-meta">
-        <span class="muted small">明細 {{ use.transactions if use else 0 }} / ルール {{ use.rules if use else 0 }} / 内訳 {{ use.allocations if use else 0 }}</span>
-        {% if c.category != fallback and (not use or use.total == 0) %}
+        <span class="muted small">明細 {{ use.transactions }} / ルール {{ use.rules }} / 内訳 {{ use.allocations }}</span>
+        {% if c.category != fallback and use.total == 0 %}
         <form method="post" action="{{ url_for('ledger.delete_category_route') }}" class="inline" onsubmit="return confirm('カテゴリ「{{ c.category }}」を削除しますか?')">
           <input type="hidden" name="category" value="{{ c.category }}">
           <button class="btn btn-sm btn-danger" type="submit">削除</button>

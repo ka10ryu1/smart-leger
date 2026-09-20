@@ -100,7 +100,9 @@ def test_edit_category_guards(data: LedgerData) -> None:
         data: テスト用データ
     """
     with pytest.raises(CategoryError):
-        edit_category(data, 'その他', '雑費', '')
+        edit_category(data, 'その他', '雑費', '説明だけは変えたい')
+
+    assert data.category_criteria()['その他'].startswith('上記')  # 検証失敗時は説明も書き換えない
 
     with pytest.raises(CategoryError):
         edit_category(data, '通信', '交通', '')
