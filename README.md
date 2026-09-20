@@ -20,6 +20,7 @@
 | 要確認 | confidence < 0.85、Jev エラー、未分類の明細。その場でカテゴリ確定 |
 | 明細編集 | カテゴリ変更(今回だけ / 今後この加盟店も)、メモ、**内訳分割(allocations)** |
 | ルール | 加盟店ルール(merchant_rules)の一覧・追加・削除 |
+| カテゴリ | カテゴリの追加・名称変更・並び替え・削除。名称変更は明細・ルール・内訳に伝播。Jev 向けの説明文も編集できる |
 
 ### 分類の流れ
 
@@ -155,13 +156,14 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 | --- | --- |
 | `transactions` | `id`, `usage_date`, `merchant_raw`, `merchant_normalized`, `amount`, `category`, `confidence`, `classification_source`, `card`, `import_id`, `imported_at`, `row_key`, `memo` |
 | `merchant_rules` | `merchant_pattern`, `category`, `created_at` |
-| `categories` | `category`, `sort_order` |
+| `categories` | `category`, `sort_order`, `description` |
 | `imports` | `import_id`, `filename`, `file_hash`, `imported_at`, `card`, `row_count` |
 | `allocations` | `transaction_id`, `category`, `amount`, `memo` |
 
 - `merchant_raw` は CSV の元の表記をそのまま保持し、`merchant_normalized` は NFKC 正規化・前後空白除去・連続空白整理後の値
 - `classification_source` は `rule` / `jev` / `manual` / `error`。`confidence` は `jev` のときのみ値が入ります
-- `categories` シートの行を増やせばカテゴリを追加できます(MVP 初期値は 10 カテゴリ)
+- カテゴリは **カテゴリ** 画面から追加・名称変更・並び替え・削除できます(初期値は 10 カテゴリ)。`description` は Jev がカテゴリを選ぶときの説明文で、空なら組み込みの既定説明、それも無ければカテゴリ名を使います
+- 名称変更は `transactions` / `merchant_rules` / `allocations` の `category` にも反映されます。使用中のカテゴリと「その他」(分類エラー時の受け皿)は削除できません
 
 ### カテゴリ(初期値)
 
