@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from datetime import date
 from pathlib import Path
 
@@ -10,7 +12,7 @@ import pytest
 from openpyxl import Workbook, load_workbook
 
 from smart_ledger.constants import DEFAULT_CATEGORIES
-from smart_ledger.models import Allocation, ImportRecord, MerchantRule, Transaction
+from smart_ledger.models import Allocation, Category, ImportRecord, LedgerData, MerchantRule, Transaction
 from smart_ledger.services.backup import DropboxBackup
 from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, sheet_columns
 
@@ -216,15 +218,10 @@ def test_concurrent_updates_are_serialized(repo: ExcelRepository) -> None:
     Args:
         repo: 一時ディレクトリ上のリポジトリ
     """
-    import threading
-    import time
-
-    from smart_ledger.models import Category
-
     repo.load()
 
     def worker(name: str, delay: float) -> None:
-        def mutate(data) -> None:  # noqa: ANN001
+        def mutate(data: LedgerData) -> None:
             time.sleep(delay)  # Jev 呼び出し待ちを模擬
             data.categories.append(Category(category=name, sort_order=99))
 

@@ -20,7 +20,7 @@ def timestamp(now: datetime | None = None) -> str:
 
 
 def backup_destination(source: Path, backup_dir: Path, now: datetime | None = None) -> Path:
-    """backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> の未使用パスを返す（同一秒内の衝突時はマイクロ秒を付ける）
+    """backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> のパスを返す（同一秒内に既存ファイルがあればマイクロ秒を付けて衝突を避ける）
 
     Args:
         source: 正本ファイル（stem と suffix を使う）

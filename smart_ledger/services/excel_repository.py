@@ -111,7 +111,7 @@ class ExcelRepository:
         self.backup_generations = backup_generations
         self.dropbox = dropbox or DropboxBackup(None)
         self.last_dropbox_result: dict[str, Path] | None = None
-        self.lock = threading.RLock()  # load() が save() を呼ぶことがあるので再入可能にする
+        self.lock = threading.RLock()  # 同一スレッドからの入れ子呼び出しでもデッドロックしないよう再入可能にする
 
     # ------------------------------------------------------------------ read
     def load(self) -> LedgerData:
@@ -124,7 +124,7 @@ class ExcelRepository:
         if not self.excel_path.exists():
             logger.info('excel not found: creating=%s', self.excel_path)
             data = default_ledger()
-            self.save(data)
+            self.save_unlocked(data)
             return data
 
         try:
