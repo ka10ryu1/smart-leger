@@ -287,6 +287,22 @@ smart-ledger/
 $env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
 ```
 
+## 開発ルール（CLAUDE.md）
+
+コードスタイルは [CLAUDE.md](CLAUDE.md) に従います。変更後は次を実行してください。
+
+```powershell
+# 未使用 import などの確認と整形（シングルクォート、行長 120）
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m ruff format .
+
+# ブロック終了後（インデントが戻る箇所）の空行を機械的に挿入
+.\.venv\Scripts\python.exe tools\insert_block_blank_lines.py smart_ledger tests tools app.py
+```
+
+- モジュール横断の定数は `smart_ledger/constants.py` に集約し、1 モジュール内で完結する値は関数の既定引数にしています
+- ログメッセージは英語小文字の `label: key=value` 形式です（UI 表示や例外メッセージは日本語）
+
 ## ログ
 
 `logs/smart_ledger.log`(ローテーション 2MB × 5)。API キー・カード番号・会員番号は出力しません
