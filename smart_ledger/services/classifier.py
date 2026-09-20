@@ -1,11 +1,11 @@
-"""分類パイプライン。
+"""分類パイプライン
 
     加盟店名正規化 → merchant_rules 検索 → 一致すれば rule
-                                       → 一致しなければ Jev(交換可能な Classifier)
+                                       → 一致しなければ Jev（交換可能な Classifier）
                                        → confidence >= 閾値 なら自動採用、未満なら要確認
                                        → Jev エラー時は その他 / source=error / 要確認
 
-Jev を別モデルやルールエンジンに置き換える場合は Classifier Protocol を実装して差し替える。
+Jev を別モデルやルールエンジンに置き換える場合は Classifier Protocol を実装して差し替える
 """
 
 from __future__ import annotations
@@ -14,15 +14,8 @@ import logging
 from datetime import date
 from typing import Protocol
 
-from ..models import (
-    CATEGORY_DESCRIPTIONS,
-    FALLBACK_CATEGORY,
-    SOURCE_ERROR,
-    SOURCE_JEV,
-    SOURCE_RULE,
-    ClassificationResult,
-    MerchantRule,
-)
+from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY, SOURCE_ERROR, SOURCE_JEV, SOURCE_RULE
+from ..models import ClassificationResult, MerchantRule
 from .jev_client import JevClient, JevError
 from .merchant_rules import match_rule
 
@@ -30,38 +23,62 @@ logger = logging.getLogger(__name__)
 
 
 class Classifier(Protocol):
-    """未知の加盟店にカテゴリを付ける分類器のインターフェース。"""
+    """未知の加盟店にカテゴリを付ける分類器のインターフェース"""
 
     def classify(
         self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
-    ) -> ClassificationResult: ...
+    ) -> ClassificationResult:
+        """加盟店を分類する
+
+        Args:
+            merchant_normalized: 正規化済みの加盟店名
+            amount: 金額（円）
+            usage_date: 利用日
+            categories: 選択肢となるカテゴリ名
+        """
+        ...
 
 
 class JevClassifier:
+    """Jev の choice でカテゴリを選ばせる分類器"""
+
     def __init__(self, client: JevClient):
+        """
+        Args:
+            client: Jev API クライアント
+        """
         self.client = client
 
     def classify(
         self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
     ) -> ClassificationResult:
+        """Jev に問い合わせて分類する（失敗しても例外を投げず source=error で返す）
+
+        Args:
+            merchant_normalized: 正規化済みの加盟店名
+            amount: 金額（円）
+            usage_date: 利用日
+            categories: 選択肢となるカテゴリ名
+        """
         criteria = {c: CATEGORY_DESCRIPTIONS.get(c, c) for c in categories}
         try:
             choice = self.client.choose_category(merchant_normalized, amount, usage_date, criteria)
         except JevError as exc:
-            logger.error("Jev 分類失敗 merchant=%s: %s", merchant_normalized, exc)
+            logger.error('jev classification failed: merchant=%s error=%s', merchant_normalized, exc)
             return ClassificationResult(
                 category=FALLBACK_CATEGORY, confidence=None, source=SOURCE_ERROR, error=str(exc)
             )
         except Exception as exc:  # 想定外でも取込全体を止めない
-            logger.exception("Jev 分類で想定外のエラー merchant=%s", merchant_normalized)
+            logger.exception('jev classification unexpected error: merchant=%s', merchant_normalized)
             return ClassificationResult(
                 category=FALLBACK_CATEGORY, confidence=None, source=SOURCE_ERROR, error=repr(exc)
             )
-        category = choice.choice if choice.choice in categories else FALLBACK_CATEGORY
+
         if choice.choice not in categories:
-            logger.warning("Jev が未知のカテゴリを返しました: %s", choice.choice)
+            logger.warning('jev returned unknown category: choice=%s', choice.choice)
+
         return ClassificationResult(
-            category=category,
+            category=choice.choice if choice.choice in categories else FALLBACK_CATEGORY,
             confidence=choice.confidence,
             source=SOURCE_JEV,
             probabilities=choice.probabilities,
@@ -69,30 +86,54 @@ class JevClassifier:
 
 
 class NullClassifier:
-    """API キー未設定などで分類器を使えないときの代替。常に要確認にする。"""
+    """API キー未設定などで分類器を使えないときの代替（常に要確認にする）"""
 
-    def __init__(self, reason: str = "分類器が設定されていません"):
+    def __init__(self, reason: str = '分類器が設定されていません'):
+        """
+        Args:
+            reason: エラー理由として ClassificationResult.error に入れる文言
+        """
         self.reason = reason
 
     def classify(
         self, merchant_normalized: str, amount: int, usage_date: date, categories: list[str]
     ) -> ClassificationResult:
-        return ClassificationResult(
-            category=FALLBACK_CATEGORY, confidence=None, source=SOURCE_ERROR, error=self.reason
-        )
+        """常に その他 / source=error を返す
+
+        Args:
+            merchant_normalized: 正規化済みの加盟店名（未使用）
+            amount: 金額（未使用）
+            usage_date: 利用日（未使用）
+            categories: カテゴリ名（未使用）
+        """
+        return ClassificationResult(category=FALLBACK_CATEGORY, confidence=None, source=SOURCE_ERROR, error=self.reason)
 
 
 class ClassificationPipeline:
+    """rule → fallback 分類器 → 閾値判定 を行うパイプライン"""
+
     def __init__(self, fallback: Classifier, threshold: float = 0.85):
+        """
+        Args:
+            fallback: ルールに一致しなかった加盟店を分類する分類器（通常は JevClassifier）
+            threshold: 自動採用する confidence の閾値
+        """
         self.fallback = fallback
         self.threshold = threshold
-        self._cache: dict[str, ClassificationResult] = {}
+        self.cache: dict[str, ClassificationResult] = {}
 
     def is_auto_accepted(self, result: ClassificationResult) -> bool:
+        """自動採用できる結果か（rule は常に採用、jev は confidence が閾値以上のとき）
+
+        Args:
+            result: 分類結果
+        """
         if result.source == SOURCE_RULE:
             return True
+
         if result.source != SOURCE_JEV or result.confidence is None:
             return False
+
         return result.confidence >= self.threshold
 
     def classify(
@@ -103,18 +144,29 @@ class ClassificationPipeline:
         categories: list[str],
         rules: list[MerchantRule],
     ) -> ClassificationResult:
+        """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は 1 回だけ問い合わせる）
+
+        Args:
+            merchant_normalized: 正規化済みの加盟店名
+            amount: 金額（円）
+            usage_date: 利用日
+            categories: 選択肢となるカテゴリ名
+            rules: 加盟店ルール
+        """
         rule = match_rule(rules, merchant_normalized)
         if rule is not None and rule.category:
             return ClassificationResult(category=rule.category, confidence=None, source=SOURCE_RULE)
 
-        # 同一取込内で同じ加盟店は 1 回だけ問い合わせる(エラー結果はキャッシュしない)
-        cached = self._cache.get(merchant_normalized)
+        cached = self.cache.get(merchant_normalized)
         if cached is not None:
             return cached
+
         result = self.fallback.classify(merchant_normalized, amount, usage_date, categories)
-        if result.source != SOURCE_ERROR:
-            self._cache[merchant_normalized] = result
+        if result.source != SOURCE_ERROR:  # エラー結果はキャッシュしない
+            self.cache[merchant_normalized] = result
+
         return result
 
     def clear_cache(self) -> None:
-        self._cache.clear()
+        """取込ごとに加盟店キャッシュを空にする"""
+        self.cache.clear()
