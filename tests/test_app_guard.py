@@ -98,7 +98,7 @@ def test_port_is_free_false_when_listener_exists() -> None:
 
 
 def test_port_is_free_after_server_closed_with_time_wait() -> None:
-    """サーバーが先に close して自分側に TIME_WAIT が残ったポートは空きと判定する（Ctrl+C 直後の再起動）"""
+    """サーバーが先に close してサーバー側に TIME_WAIT が残ったポートは空きと判定する（Ctrl+C 直後の再起動）"""
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(('127.0.0.1', 0))
@@ -106,9 +106,9 @@ def test_port_is_free_after_server_closed_with_time_wait() -> None:
     port = listener.getsockname()[1]
     client = socket.create_connection(('127.0.0.1', port))
     server_side, _ = listener.accept()
-    server_side.close()  # サーバーが先に FIN を送る → サーバー側が TIME_WAIT になる
-    client.recv(1)
-    client.close()
+    server_side.close()  # サーバーが先に FIN を送る
+    client.recv(1)  # FIN を受け取るまで待つ
+    client.close()  # クライアントも閉じた時点でサーバー側が TIME_WAIT になる
     listener.close()
     assert port_is_free('127.0.0.1', port) is True
 

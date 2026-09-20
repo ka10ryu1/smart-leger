@@ -33,11 +33,11 @@ def port_is_free(host: str, port: int) -> bool:
     """werkzeug のサーバーがそのアドレスに bind できるか（待ち受け中のサーバーが無いか）を確かめる
 
     接続を試す方法だと、環境によって空きポートへの接続が「接続拒否」ではなくタイムアウトになり
-    使用中と誤判定するため、bind の成否で判断する。ソケットオプションは werkzeug と同じ条件に揃える。
-    Windows 以外では SO_REUSEADDR を付ける（停止直後の TIME_WAIT が残っていても werkzeug は bind できるので
-    空きと判定する。待ち受け中のソケットがあれば SO_REUSEADDR 付きでも失敗する）。
-    Windows では付けない（付けると待ち受け中のサーバーがいても bind が成功して二重起動を検出できない。
-    Windows は TIME_WAIT だけなら素の bind が成功する）
+    使用中と誤判定するため、bind の成否で判断する。ソケットオプションは OS で分ける。
+    Windows 以外では werkzeug と同じく SO_REUSEADDR を付ける（停止直後の TIME_WAIT が残っていても werkzeug は
+    bind できるので空きと判定する。待ち受け中のソケットがあれば SO_REUSEADDR 付きでも失敗する）。
+    Windows では werkzeug と違って付けない（付けると待ち受け中のサーバーがいても bind が成功して
+    二重起動を検出できない。Windows は TIME_WAIT だけなら素の bind が成功するので付けなくても再起動できる）
 
     Args:
         host: bind するアドレス（app.run に渡すものと同じにする。Windows では 127.0.0.1 と 0.0.0.0 が
