@@ -38,6 +38,9 @@ def test_normalize_merchant(raw: str | None, expected: str) -> None:
         ('セブン-イレブン 12345', 'セブン-イレブン 12345'),
         ('7-ELEVEN', '7-ELEVEN'),
         ('8ガツブン', '8ガツブン'),
+        ('スシロ-', 'スシロ-'),
+        ('- 2026/08 ガス -', 'ガス'),
+        ('r7年 ジドウシャゼイ', 'ジドウシャゼイ'),
     ],
 )
 def test_merchant_key_strips_only_billing_month_tokens(normalized: str, expected: str) -> None:

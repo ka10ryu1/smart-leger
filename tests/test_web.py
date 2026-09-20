@@ -279,3 +279,23 @@ def test_rule_from_transaction_applies_across_billing_months(client: FlaskClient
     assert 'ルール一致 1 件' in body
     listing = client.get('/transactions?q=9ガツブン').get_data(as_text=True)
     assert '住居・光熱' in listing and 'ルール' in listing
+
+
+def test_rule_pattern_not_matching_transaction_warns(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """入力したパターンが当該明細に一致しない場合は登録はされるが警告が出る
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token}, follow_redirects=True)
+    tx_html = client.get('/transactions?q=サンプルカフェ').get_data(as_text=True)
+    tx_id = tx_html.split('/transactions/')[1].split('/edit')[0]
+    body = client.post(
+        f'/transactions/{tx_id}/category',
+        data={'category': '外食', 'scope': 'always', 'rule_pattern': 'ゼンゼンチガウミセ'},
+        follow_redirects=True,
+    ).get_data(as_text=True)
+    assert 'ルール「ゼンゼンチガウミセ」を登録しました' in body
+    assert 'この明細の加盟店名に一致しません' in body

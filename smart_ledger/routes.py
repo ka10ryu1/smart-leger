@@ -348,9 +348,15 @@ def edit_transaction(tx_id: str) -> str:
     if tx is None:
         abort(404)
 
+    # 提案パターンをルール化したときに一致する他の明細（手動修正済みは反映対象外なので除く）。
+    # match_rule はカテゴリ無しのルールを無視するため、仮のカテゴリを入れて照合する
     suggested = suggest_rule_pattern(tx.merchant_normalized)
-    probe = [MerchantRule(merchant_pattern=suggested, category=tx.category or '-')]
-    same_merchant = [t for t in data.transactions if t.id != tx.id and match_rule(probe, t.merchant_normalized)]
+    probe = [MerchantRule(merchant_pattern=suggested, category='-')]
+    same_merchant = [
+        t
+        for t in data.transactions
+        if t.id != tx.id and t.classification_source != SOURCE_MANUAL and match_rule(probe, t.merchant_normalized)
+    ]
     return render_template(
         'edit.html',
         tx=tx,
@@ -396,7 +402,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     rule_pattern = request.form.get('rule_pattern', '').strip()
     back = safe_back()
 
-    def mutate(data: LedgerData) -> tuple[int, str]:
+    def mutate(data: LedgerData) -> tuple[int, str, bool]:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
@@ -409,7 +415,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
         if scope != 'always':
-            return 0, ''
+            return 0, '', True
 
         rule = upsert_rule(data, rule_pattern or suggest_rule_pattern(tx.merchant_normalized), category)
         applied_others = 0
@@ -428,10 +434,11 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             other.classification_source = SOURCE_RULE
             applied_others += 1
 
-        return applied_others, rule.merchant_pattern
+        matches_self = match_rule([rule], tx.merchant_normalized) is not None
+        return applied_others, rule.merchant_pattern, matches_self
 
     try:
-        applied_others, pattern = svc().repo.update(mutate)
+        applied_others, pattern, matches_self = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
@@ -444,6 +451,9 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
 
     flash(msg, 'success')
+    if not matches_self:
+        flash(f'ルール「{pattern}」はこの明細の加盟店名に一致しません。パターンを確認してください。', 'warning')
+
     return redirect(back)
 
 
