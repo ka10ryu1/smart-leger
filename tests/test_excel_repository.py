@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import pytest
@@ -13,7 +13,7 @@ from openpyxl import Workbook, load_workbook
 
 from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.models import Allocation, Category, ImportRecord, LedgerData, MerchantRule, Transaction
-from smart_ledger.services.backup import DropboxBackup
+from smart_ledger.services.backup import DropboxBackup, backup_destination
 from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, sheet_columns
 
 
@@ -256,3 +256,28 @@ def test_dropbox_backup_names_do_not_collide_within_same_second(tmp_path: Path) 
     assert first['backup'].read_bytes() == b'v1'
     assert second['backup'].read_bytes() == b'v2'
     assert len(list((dropbox / 'backup').glob('household_*.xlsx'))) == 2
+
+
+def test_backup_destination_probes_until_unused(tmp_path: Path) -> None:
+    """同じ時刻値で繰り返し呼んでも、マイクロ秒・連番を付けて未使用のパスを返す
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    source = tmp_path / 'household.xlsx'
+    backup_dir = tmp_path / 'backup'
+    backup_dir.mkdir()
+    now = datetime(2026, 9, 20, 12, 0, 0, 123456)
+    names = []
+    for _ in range(4):
+        dest = backup_destination(source, backup_dir, now)
+        dest.write_bytes(b'x')
+        names.append(dest.name)
+
+    assert names == [
+        'household_20260920_120000.xlsx',
+        'household_20260920_120000_123456.xlsx',
+        'household_20260920_120000_123456_01.xlsx',
+        'household_20260920_120000_123456_02.xlsx',
+    ]
+    assert sorted(names) == names  # prune_backups は名前順に古いものから消すので、生成順と一致する必要がある

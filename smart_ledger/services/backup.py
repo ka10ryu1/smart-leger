@@ -20,7 +20,9 @@ def timestamp(now: datetime | None = None) -> str:
 
 
 def backup_destination(source: Path, backup_dir: Path, now: datetime | None = None) -> Path:
-    """backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> のパスを返す（同一秒内に既存ファイルがあればマイクロ秒を付けて衝突を避ける）
+    """backup_dir/<stem>_YYYYMMDD_HHMMSS<suffix> の未使用パスを返す
+
+    既存ファイルと重なる場合はマイクロ秒を付け、それでも重なる場合は連番を増やして未使用の名前になるまで探す
 
     Args:
         source: 正本ファイル（stem と suffix を使う）
@@ -28,9 +30,17 @@ def backup_destination(source: Path, backup_dir: Path, now: datetime | None = No
         now: 基準時刻（None なら現在時刻）
     """
     now = now or datetime.now()
-    dest = backup_dir / f'{source.stem}_{timestamp(now)}{source.suffix}'
-    if dest.exists():
-        dest = backup_dir / f'{source.stem}_{timestamp(now)}_{now.microsecond:06d}{source.suffix}'
+    base = f'{source.stem}_{timestamp(now)}'
+    dest = backup_dir / f'{base}{source.suffix}'
+    if not dest.exists():
+        return dest
+
+    base = f'{base}_{now.microsecond:06d}'
+    dest = backup_dir / f'{base}{source.suffix}'
+    counter = 1
+    while dest.exists():
+        dest = backup_dir / f'{base}_{counter:02d}{source.suffix}'
+        counter += 1
 
     return dest
 
