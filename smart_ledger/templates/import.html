@@ -1,5 +1,12 @@
 {% extends "base.html" %}
 {% block title %}CSV 取込{% endblock %}
+{# 取り消しボタン: 手動修正・内訳がある場合は件数を確認ダイアログに出す #}
+{% macro undo_form(imp, s) -%}
+<form method="post" action="{{ url_for('ledger.import_undo', import_id=imp.import_id) }}" class="inline"
+      onsubmit="return confirm('取込「{{ imp.filename }}」({{ s.transactions }} 件)を取り消しますか?{% if s.manual_edits %}\n手動で変更したカテゴリ・メモ {{ s.manual_edits }} 件が失われます。{% endif %}{% if s.allocations %}\n内訳 {{ s.allocations }} 件も削除されます。{% endif %}\n加盟店ルールは残ります。')">
+  <button class="btn btn-sm btn-danger" type="submit">取り消す</button>
+</form>
+{%- endmacro %}
 {% block content %}
 <h1>CSV 取込</h1>
 
@@ -81,19 +88,26 @@
   {% if imports %}
   <div class="tx-table-wrap">
   <table class="tx-table">
-    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th></tr></thead>
+    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th><th></th></tr></thead>
     <tbody>
     {% for i in imports %}
-      <tr><td class="nowrap">{{ i.imported_at }}</td><td>{{ i.filename }}</td><td>{{ i.card }}</td><td class="num">{{ i.row_count }}</td><td class="muted mono">{{ i.file_hash[:12] }}…</td></tr>
+      <tr>
+        <td class="nowrap">{{ i.imported_at }}</td><td>{{ i.filename }}</td><td>{{ i.card }}</td><td class="num">{{ i.row_count }}</td><td class="muted mono">{{ i.file_hash[:12] }}…</td>
+        <td>{{ undo_form(i, summaries[i.import_id]) }}</td>
+      </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
   <ul class="tx-cards">
   {% for i in imports %}
-    <li class="tx-card"><div class="tx-card-row"><span class="tx-date">{{ i.imported_at[:10] }}</span><span class="tx-merchant">{{ i.filename }}</span><span class="tx-amount">{{ i.row_count }}<small>件</small></span></div></li>
+    <li class="tx-card">
+      <div class="tx-card-row"><span class="tx-date">{{ i.imported_at[:10] }}</span><span class="tx-merchant">{{ i.filename }}</span><span class="tx-amount">{{ i.row_count }}<small>件</small></span></div>
+      <div class="tx-card-row sub">{{ undo_form(i, summaries[i.import_id]) }}</div>
+    </li>
   {% endfor %}
   </ul>
+  <p class="hint">「取り消す」はその取込の明細と内訳を削除し、同じ CSV を取り込み直せる状態にします。手動で変更したカテゴリやメモも消えます。後の取込で「重複」としてスキップされた明細はこの取込の明細のまま残っているため、一緒に消えます。加盟店ルールは残ります。</p>
   {% else %}
   <p class="empty">まだ取込履歴はありません。</p>
   {% endif %}

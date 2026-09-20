@@ -30,7 +30,7 @@ from .constants import (
     SOURCE_RULE,
     UNCLASSIFIED_LABEL,
 )
-from .models import LedgerData, Transaction, now_iso
+from .models import ImportRecord, LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
     month_label,
@@ -51,7 +51,7 @@ from .services.categories import (
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
-from .services.importer import Importer, ImportResult
+from .services.importer import Importer, ImportResult, ImportUndoSummary, summarize_import, undo_import
 from .services.jev_client import JevClient
 from .services.merchant_rules import delete_rule, match_rule, preview_rule_targets, rule_targets, upsert_rule
 from .services.normalize import merchant_key
@@ -486,12 +486,22 @@ def clear_allocations(tx_id: str) -> WerkzeugResponse:
 
 
 # ------------------------------------------------------------------- import
+def import_history(data: LedgerData) -> tuple[list[ImportRecord], dict[str, ImportUndoSummary]]:
+    """取込履歴（新しい順）と、取り消し確認に使う件数のまとめを返す
+
+    Args:
+        data: 全データ
+    """
+    imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
+    summaries = {i.import_id: summary for i in imports if (summary := summarize_import(data, i.import_id))}
+    return imports, summaries
+
+
 @bp.route('/import')
 def import_page() -> str:
     """CSV 取込画面（ファイル選択と取込履歴）"""
-    data = load_data()
-    imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
-    return render_template('import.html', preview=None, imports=imports)
+    imports, summaries = import_history(load_data())
+    return render_template('import.html', preview=None, imports=imports, summaries=summaries)
 
 
 @bp.route('/import/preview', methods=['POST'])
@@ -514,8 +524,8 @@ def import_preview() -> str | WerkzeugResponse:
         flash(f'CSV を解析できませんでした: {exc}', 'error')
         return redirect(url_for('ledger.import_page'))
 
-    imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
-    return render_template('import.html', preview=preview, imports=imports)
+    imports, summaries = import_history(data)
+    return render_template('import.html', preview=preview, imports=imports, summaries=summaries)
 
 
 @bp.route('/import/commit', methods=['POST'])
@@ -558,6 +568,24 @@ def import_commit() -> WerkzeugResponse:
         return redirect(url_for('ledger.dashboard', month=result.months[-1]))
 
     return redirect(url_for('ledger.dashboard'))
+
+
+@bp.route('/import/<import_id>/undo', methods=['POST'])
+def import_undo(import_id: str) -> WerkzeugResponse:
+    """取込を取り消す（明細・内訳・履歴を削除。同じ CSV を再取込できるようになる）
+
+    Args:
+        import_id: 取り消す取込 ID
+    """
+
+    def message(summary: ImportUndoSummary) -> str:
+        text = f'取込「{summary.filename}」を取り消し、明細 {summary.transactions} 件を削除しました。'
+        if summary.allocations:
+            text += f' 内訳 {summary.allocations} 件も削除しました。'
+
+        return text + ' 同じ CSV を取り込み直せます。'
+
+    return save_and_redirect(lambda data: undo_import(data, import_id), message, url_for('ledger.import_page'))
 
 
 @bp.route('/import/discard', methods=['POST'])

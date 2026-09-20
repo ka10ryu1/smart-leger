@@ -345,3 +345,26 @@ def test_always_scope_respects_more_specific_existing_rule(client: FlaskClient, 
     assert '一致する 5 件にも適用しました' in body
     cafe = client.get('/transactions?q=サンプルカフェ').get_data(as_text=True)
     assert '<span class="badge cat">外食</span>' in cafe and '<span class="badge cat">食費</span>' not in cafe
+
+
+def test_import_undo_then_reimport(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """取込履歴から取り消すと明細が消え、同じ CSV を再び取り込める
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token}, follow_redirects=True)
+    assert '取り込み済みです' in upload(client, fixture_csv_bytes)
+
+    history = client.get('/import').get_data(as_text=True)
+    import_id = history.split('/undo"')[0].rsplit('/import/', 1)[1]
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '明細 10 件を削除しました' in body
+    assert '取り消す' not in client.get('/import').get_data(as_text=True)
+    assert client.get('/transactions').get_data(as_text=True).count('編集') == 0
+
+    assert '10 件を取り込む' in upload(client, fixture_csv_bytes)
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '取込履歴が見つかりません' in body
