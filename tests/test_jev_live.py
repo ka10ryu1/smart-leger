@@ -71,3 +71,16 @@ def test_live_pipeline_marks_high_confidence_as_auto_accepted(live_client: JevCl
     assert result.category == '保険・税金'
     assert result.confidence is not None
     assert pipeline.is_auto_accepted(result) == (result.confidence >= 0.85)
+
+
+def test_live_kana_telecom_charge_is_classified_as_telecom(live_client: JevClient, criteria: dict[str, str]) -> None:
+    """半角カナ略称の携帯電話料金（月分付き）が「通信」になる（指示文のカナ読み替えヒントの回帰確認）
+
+    Args:
+        live_client: 実 API クライアント
+        criteria: 初期カテゴリの 名前 → 説明
+    """
+    pipeline = ClassificationPipeline(JevClassifier(live_client), threshold=0.85)
+    result = pipeline.classify('7ガツブン エ-ユ-デンワリヨウリヨウ', 20871, date(2026, 8, 10), criteria, [])
+    assert result.category == '通信'
+    assert result.confidence is not None and result.confidence >= 0.85
