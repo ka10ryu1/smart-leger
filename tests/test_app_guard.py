@@ -1,4 +1,4 @@
-"""app.py の二重起動ガード（/health による起動済み判定）のテスト"""
+"""app.py の二重起動ガード（bind による空き判定と /health による起動済み判定）のテスト"""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Iterator
 
 import pytest
 
-from app import running_instance
+from app import port_is_free, running_instance
 
 
 def free_port() -> int:
@@ -75,6 +75,25 @@ def test_running_instance_detects_other_program(http_server: tuple[str, int]) ->
         http_server: ローカル HTTP サーバー
     """
     assert running_instance(http_server[0]) is False
+
+
+def test_port_is_free_when_nobody_listens() -> None:
+    """誰も待ち受けていないポートは空きと判定する"""
+    assert port_is_free('127.0.0.1', free_port()) is True
+
+
+def test_port_is_free_false_when_listener_exists() -> None:
+    """待ち受け中のポートは空きと判定しない（SO_REUSEADDR 付きの werkzeug 相当のリスナーでも同じ）"""
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(('127.0.0.1', 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    try:
+        assert port_is_free('127.0.0.1', port) is False
+        assert port_is_free('0.0.0.0', port) is False
+    finally:
+        listener.close()
 
 
 def test_running_instance_none_when_port_closed() -> None:

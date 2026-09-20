@@ -5,7 +5,11 @@ python app.py --open-browser  # 起動後にブラウザを開く（start.ps1 �
 
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
 （Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。
-ポートが使用中で Smart Ledger と確認できない場合（別のプログラム、応答しないインスタンス）はメッセージを出して終了コード 1 で終わる
+判定は 2 段階で行う。まずソケットの bind でポートが空いているかを確かめ（空いていればそのまま起動）、
+bind できないときだけ /health で Smart Ledger かどうかを問い合わせる。空きポートへの接続が「接続拒否」ではなく
+タイムアウトになる Windows 環境があり、接続確認だけでは空きポートを使用中と誤判定するため。
+bind できず Smart Ledger とも確認できない場合（別のプログラム、応答しないインスタンス、予約済みポート）は
+メッセージを出して終了コード 1 で終わる
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ import argparse
 import http.client
 import json
 import os
+import socket
 import sys
 import threading
 import urllib.error
@@ -22,6 +27,29 @@ import webbrowser
 
 from smart_ledger import create_app
 from smart_ledger.config import load_config
+
+
+def port_is_free(host: str, port: int) -> bool:
+    """そのアドレスにソケットを bind できるか（誰も待ち受けていないか）を確かめる
+
+    接続を試す方法だと、環境によって空きポートへの接続が「接続拒否」ではなくタイムアウトになり
+    使用中と誤判定するため、bind の成否で判断する（SO_REUSEADDR を付けないので、
+    Windows でも既存のサーバーが bind 済みなら失敗する）
+
+    Args:
+        host: bind するアドレス（app.run に渡すものと同じ。'' や '0.0.0.0' も可）
+        port: ポート番号
+
+    Returns:
+        True: 空いている / False: 何かが bind 済み（または bind 権限が無い）
+    """
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((host, port))
+    except OSError:
+        return False
+
+    return True
 
 
 def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger') -> bool | None:
@@ -34,8 +62,9 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
 
     Returns:
         True: Smart Ledger が応答した /
-        False: ポートは使用中だが Smart Ledger と確認できない（別のプログラム、または timeout 内に応答しない）/
-        None: 接続が拒否された（誰も待ち受けていない）
+        False: 接続は拒否されないが Smart Ledger と確認できない（別のプログラムが応答した、または timeout 内に応答が無い）/
+        None: 接続が拒否された（誰も待ち受けていない）。空きポートへの接続がタイムアウトになる環境では
+        空きでも False になるので、空きかどうかの判定には port_is_free を先に使う
     """
     try:
         with urllib.request.urlopen(f'{url}/health', timeout=timeout) as response:
@@ -69,7 +98,7 @@ def main(browser_delay_seconds: float = 1.2) -> int:
         browser_delay_seconds: --open-browser 指定時にブラウザを開くまでの待ち秒数
 
     Returns:
-        終了コード（既に起動済みなら 0、ポートが使用中で Smart Ledger と確認できなければ 1）
+        終了コード（既に起動済みなら 0、ポートを bind できず Smart Ledger とも確認できなければ 1）
     """
     parser = argparse.ArgumentParser(description='Smart Ledger')
     parser.add_argument('--open-browser', action='store_true', help='起動後にブラウザで開く')
@@ -81,8 +110,9 @@ def main(browser_delay_seconds: float = 1.2) -> int:
     port = args.port or config.port
     url = f'http://localhost:{port}'
 
-    # debug リローダーの子プロセスは親が同じポートを確認済みなので飛ばす
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true':
+    # debug リローダーの子プロセスは親が同じポートを確認済みなので飛ばす。
+    # bind できれば空きポートなので接続確認はせず起動する（接続確認は環境によりタイムアウトで空きを使用中と誤判定するため）
+    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true' and not port_is_free(args.host, port):
         probe_host = '127.0.0.1' if args.host in ('', '0.0.0.0') else args.host  # 0.0.0.0 には接続できない
         already = running_instance(f'http://{probe_host}:{port}')
         if already is True:
@@ -92,13 +122,19 @@ def main(browser_delay_seconds: float = 1.2) -> int:
 
             return 0
 
-        if already is False:
+        if already is None:
+            # bind はできないのに接続は拒否される: OS や他のプログラムがポートを予約している、または権限が無い
             print(
-                f'ポート {port} は使用中ですが Smart Ledger の応答を確認できませんでした'
-                '(別のプログラム、または応答しない起動中のインスタンス)。'
-                '起動中のウィンドウを閉じるか、.env の SMART_LEDGER_PORT を変更してください。'
+                f'ポート {port} を使用できません(予約済み、または権限がありません)。.env の SMART_LEDGER_PORT を変更してください。'
             )
             return 1
+
+        print(
+            f'ポート {port} は使用中ですが Smart Ledger の応答を確認できませんでした'
+            '(別のプログラム、または応答しない起動中のインスタンス)。'
+            '起動中のウィンドウを閉じるか、.env の SMART_LEDGER_PORT を変更してください。'
+        )
+        return 1
 
     app = create_app(config)
     if args.open_browser and (not config.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):
