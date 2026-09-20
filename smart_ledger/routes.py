@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import urlsplit
 
 from flask import (
     Blueprint,
@@ -19,7 +20,7 @@ from flask import (
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
-from .constants import MONTH_PATTERN, SOURCE_LABELS, SOURCE_MANUAL, SOURCE_RULE
+from .constants import MONTH_PATTERN, SOURCE_LABELS, SOURCE_MANUAL, SOURCE_RULE, UNCLASSIFIED_LABEL
 from .models import LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
@@ -41,6 +42,7 @@ from .services.merchant_rules import delete_rule, match_rule, upsert_rule
 logger = logging.getLogger(__name__)
 
 bp = Blueprint('ledger', __name__)
+bp.add_app_template_filter(month_label, 'month_label')
 
 
 @dataclass
@@ -49,7 +51,6 @@ class Services:
 
     config: Config
     repo: ExcelRepository
-    pipeline: ClassificationPipeline
     importer: Importer
 
 
@@ -64,7 +65,7 @@ def build_services(config: Config) -> Services:
         config.excel_path,
         backup_dir=config.backup_dir,
         backup_generations=config.backup_generations,
-        dropbox=DropboxBackup(config.dropbox_path),
+        dropbox=DropboxBackup(config.dropbox_path, config.backup_generations),
     )
     jev = JevClient(config.typesafe_api_key, model=config.typesafe_model, base_url=config.typesafe_base_url)
     if jev.configured:
@@ -74,7 +75,7 @@ def build_services(config: Config) -> Services:
 
     pipeline = ClassificationPipeline(fallback, threshold=config.confidence_threshold)
     importer = Importer(config.staging_dir, pipeline)
-    return Services(config=config, repo=repo, pipeline=pipeline, importer=importer)
+    return Services(config=config, repo=repo, importer=importer)
 
 
 def svc() -> Services:
@@ -109,6 +110,14 @@ def pct(value: float | None) -> str:
     return f'{value * 100:.1f}%'
 
 
+@bp.before_app_request
+def reject_cross_site_post() -> None:
+    """Origin / Referer のホストが一致しない POST を 403 にする（別サイトのページからの CSRF 対策）"""
+    source = request.headers.get('Origin') or request.referrer
+    if request.method == 'POST' and source and urlsplit(source).netloc != request.host:
+        abort(403)
+
+
 @bp.app_template_filter('conf')
 def conf(value: float | None) -> str:
     """confidence を小数 2 桁にする
@@ -122,14 +131,13 @@ def conf(value: float | None) -> str:
     return f'{float(value):.2f}'
 
 
-@bp.app_template_filter('month_label')
-def month_label_filter(value: str) -> str:
-    """'YYYY-MM' を '2026年9月' にする
+def safe_back() -> str:
+    """リクエストの back パラメータをサイト内の相対パスに限定して返す（外部 URL や javascript: は明細一覧に置き換える）"""
+    value = request.values.get('back')
+    if value and value.startswith('/') and not value.startswith('//') and '\\' not in value:  # ブラウザは \ も / と扱う
+        return value
 
-    Args:
-        value: 年月
-    """
-    return month_label(value)
+    return url_for('ledger.transactions')
 
 
 @bp.app_template_filter('source_label')
@@ -139,7 +147,7 @@ def source_label(value: str) -> str:
     Args:
         value: rule / jev / manual / error
     """
-    return SOURCE_LABELS.get(value, value or '未分類')
+    return SOURCE_LABELS.get(value, value or UNCLASSIFIED_LABEL)
 
 
 @bp.app_context_processor
@@ -322,7 +330,7 @@ def edit_transaction(tx_id: str) -> str:
         categories=data.category_names(),
         rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),
-        back=request.args.get('back') or request.referrer or url_for('ledger.transactions'),
+        back=safe_back(),
     )
 
 
@@ -336,7 +344,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     category = request.form.get('category', '').strip()
     scope = request.form.get('scope', 'once')
     memo = request.form.get('memo', '').strip()
-    back = request.form.get('back') or url_for('ledger.transactions')
+    back = safe_back()
     applied_others = 0
 
     def mutate(data: LedgerData) -> None:
@@ -395,12 +403,7 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
     Args:
         tx_id: 明細 ID
     """
-    back = request.form.get('back') or url_for('ledger.transactions')
-    try:
-        items = parse_allocation_form()
-    except ValueError as exc:
-        flash(str(exc), 'error')
-        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+    edit_url = url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
 
     def mutate(data: LedgerData) -> None:
         tx = data.find_transaction(tx_id)
@@ -410,13 +413,14 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
         replace_allocations(data, tx_id, validate_allocations(tx, items, data.category_names()))
 
     try:
+        items = parse_allocation_form()
         svc().repo.update(mutate)
-    except ValueError as exc:  # AllocationError
+    except ValueError as exc:  # 金額が数値でない / AllocationError
         flash(str(exc), 'error')
-        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+        return redirect(edit_url)
 
     flash('内訳を保存しました。' if items else '内訳を削除しました。', 'success')
-    return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+    return redirect(edit_url)
 
 
 @bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])
@@ -426,7 +430,7 @@ def clear_allocations(tx_id: str) -> WerkzeugResponse:
     Args:
         tx_id: 明細 ID
     """
-    back = request.form.get('back') or url_for('ledger.transactions')
+    back = safe_back()
     svc().repo.update(lambda data: replace_allocations(data, tx_id, []))
     flash('内訳を削除しました。', 'success')
     return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
@@ -472,10 +476,6 @@ def import_commit() -> WerkzeugResponse:
     preview = svc().importer.load_preview(token)
     if preview is None:
         flash('プレビュー情報が見つかりません。もう一度 CSV を選択してください。', 'error')
-        return redirect(url_for('ledger.import_page'))
-
-    if preview.already_imported:
-        flash('このCSVはすでに取り込み済みです。', 'warning')
         return redirect(url_for('ledger.import_page'))
 
     results: list[ImportResult] = []
@@ -543,7 +543,12 @@ def add_rule() -> WerkzeugResponse:
         flash('加盟店パターンとカテゴリを入力してください。', 'error')
         return redirect(url_for('ledger.rules'))
 
-    svc().repo.update(lambda data: upsert_rule(data, pattern, category))
+    try:
+        svc().repo.update(lambda data: upsert_rule(data, pattern, category))
+    except ValueError as exc:  # 不明なカテゴリなど
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.rules'))
+
     flash(f'ルールを登録しました: {pattern} → {category}', 'success')
     return redirect(url_for('ledger.rules'))
 

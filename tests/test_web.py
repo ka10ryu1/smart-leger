@@ -104,3 +104,67 @@ def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
     """
     assert client.get('/?month=abcdefg').status_code == 200
     assert client.get('/transactions?month=2026-13').status_code == 200
+
+
+def test_rule_add_rejects_unknown_category(client: FlaskClient) -> None:
+    """カテゴリ一覧に無いカテゴリのルールは登録されない
+
+    Args:
+        client: テストクライアント
+    """
+    response = client.post('/rules/add', data={'merchant_pattern': 'X', 'category': 'typo'}, follow_redirects=True)
+    html = response.get_data(as_text=True)
+    assert '不明なカテゴリです' in html and '→ typo' not in html
+
+
+def test_external_back_is_replaced(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """back に外部 URL を渡しても戻り先はサイト内に限定される
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token})
+    tx_html = client.get('/transactions?q=SAMPLE').get_data(as_text=True)
+    tx_id = tx_html.split('/transactions/')[1].split('/edit')[0]
+    html = client.get(f'/transactions/{tx_id}/edit?back=https://evil.example').get_data(as_text=True)
+    assert 'evil.example' not in html
+    for back in ('//evil.example', '/\\evil.example/p', 'https://evil.example'):
+        response = client.post(f'/transactions/{tx_id}/category', data={'category': 'その他', 'back': back})
+        assert response.headers['Location'] == '/transactions'
+
+
+def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """「今後この加盟店も」は同じ加盟店の他の明細にも反映され、件数が表示される
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    client.post('/import/commit', data={'token': token})
+    tx_html = client.get('/transactions?q=ホケン').get_data(as_text=True)
+    tx_id = tx_html.split('/transactions/')[1].split('/edit')[0]
+    response = client.post(
+        f'/transactions/{tx_id}/category', data={'category': '保険・税金', 'scope': 'always'}, follow_redirects=True
+    )
+    assert '同じ加盟店の 1 件にも適用しました' in response.get_data(as_text=True)
+    response = client.post(
+        f'/transactions/{tx_id}/allocations',
+        data={'alloc_category': ['食費'], 'alloc_amount': ['abc'], 'alloc_memo': ['']},
+        follow_redirects=True,
+    )
+    assert '内訳の金額が数値ではありません' in response.get_data(as_text=True)
+
+
+def test_cross_site_post_is_rejected(client: FlaskClient) -> None:
+    """Origin のホストが一致しない POST は 403、一致すれば受け付ける
+
+    Args:
+        client: テストクライアント
+    """
+    data = {'merchant_pattern': 'X', 'category': 'その他'}
+    assert client.post('/rules/add', data=data, headers={'Origin': 'https://evil.example'}).status_code == 403
+    assert client.post('/rules/add', data=data, headers={'Referer': 'https://evil.example/p'}).status_code == 403
+    assert client.post('/rules/add', data=data, headers={'Origin': 'http://localhost'}).status_code == 302

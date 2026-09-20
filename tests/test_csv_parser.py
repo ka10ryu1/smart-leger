@@ -109,7 +109,16 @@ def test_row_key_stable_across_parses(fixture_csv_bytes: bytes) -> None:
 
 @pytest.mark.parametrize(
     'raw,expected',
-    [('20,871', 20871), ('440', 440), ('-1,000', -1000), ('', None), ('abc', None)],
+    [
+        ('20,871', 20871),
+        ('440', 440),
+        ('-1,000', -1000),
+        ('▲2,500', -2500),
+        ('(300)', -300),
+        ('¥1,000円', 1000),
+        ('', None),
+        ('abc', None),
+    ],
 )
 def test_parse_amount(raw: str, expected: int | None) -> None:
     """金額文字列の変換

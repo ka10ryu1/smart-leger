@@ -52,13 +52,16 @@ def upsert_rule(data: LedgerData, merchant_pattern: str, category: str) -> Merch
     if not pattern:
         raise ValueError('加盟店パターンが空です。')
 
+    if category not in data.category_names():
+        raise ValueError(f'不明なカテゴリです: {category}')
+
     for rule in data.merchant_rules:
         if normalize_merchant(rule.merchant_pattern).casefold() == pattern.casefold():
             rule.category = category
             rule.created_at = now_iso()
             return rule
 
-    rule = MerchantRule(merchant_pattern=pattern, category=category, created_at=now_iso())
+    rule = MerchantRule(merchant_pattern=pattern, category=category)
     data.merchant_rules.append(rule)
     return rule
 

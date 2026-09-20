@@ -19,6 +19,5 @@ def normalize_merchant(raw: str | None) -> str:
         return ''
 
     text = unicodedata.normalize('NFKC', str(raw))
-    text = text.replace('　', ' ')
     text = re.sub(r'\s+', ' ', text).strip()
     return text

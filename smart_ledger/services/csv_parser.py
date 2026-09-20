@@ -12,7 +12,7 @@
     2026/08/10,加盟店名,"20,871",,"20,871",１回払,,"20,871",,   ,
 
 - 固定行数 skip ではなく、ヘッダー行を「ご利用年月日」で検出する
-- 文字コードは UTF-8(BOM) → CP932 → Shift_JIS → UTF-8 の順に試す（constants.CSV_ENCODINGS）
+- 文字コードは UTF-8(BOM 有無どちらも) → CP932 の順に試す（constants.CSV_ENCODINGS）
 - 会員番号・氏名などはパース結果に含めない（card はカード名のみ）
 """
 
@@ -26,7 +26,6 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from pathlib import Path
 
 from ..constants import (
     CSV_AMOUNT_COLUMNS,
@@ -75,20 +74,9 @@ class ParsedStatement:
     card: str
     encoding: str
     header_line: int
-    header: list[str]
     file_hash: str
     skipped_lines: int = 0
-    payment_date: str | None = None
     warnings: list[str] = field(default_factory=list)
-
-
-def compute_file_hash(data: bytes) -> str:
-    """ファイル全体の SHA-256 を返す
-
-    Args:
-        data: CSV のバイト列
-    """
-    return hashlib.sha256(data).hexdigest()
 
 
 def decode_bytes(data: bytes, encodings: tuple[str, ...] = CSV_ENCODINGS) -> tuple[str, str]:
@@ -122,7 +110,7 @@ def find_header_index(lines: list[list[str]], header_marker: str = CSV_HEADER_MA
         if not fields_:
             continue
 
-        first = unicodedata.normalize('NFKC', fields_[0]).strip().lstrip('﻿')
+        first = unicodedata.normalize('NFKC', fields_[0]).strip()
         if first.startswith(header_marker):
             return idx
 
@@ -193,33 +181,23 @@ def parse_amount(text: str) -> int | None:
     return -value if negative else value
 
 
-def extract_meta(
-    lines: list[list[str]], header_idx: int, card_keys: tuple[str, ...] = CSV_CARD_META_KEYS
-) -> tuple[str, str | None]:
-    """ヘッダーより前のメタ情報からカード名・お支払日を拾う（会員番号は読まない）
+def extract_meta(lines: list[list[str]], header_idx: int, card_keys: tuple[str, ...] = CSV_CARD_META_KEYS) -> str:
+    """ヘッダーより前のメタ情報からカード名を拾う（会員番号は読まない。無ければ空文字）
 
     Args:
         lines: csv.reader で読んだ全行
         header_idx: 明細ヘッダー行の index
         card_keys: カード名を示すメタ行のキー候補
-
-    Returns:
-        (カード名, お支払日の文字列または None)
     """
-    card = ''
-    payment_date: str | None = None
     for fields_ in lines[:header_idx]:
         if len(fields_) < 2:
             continue
 
         key = unicodedata.normalize('NFKC', fields_[0]).strip()
-        value = fields_[1].strip()
-        if any(k in key for k in card_keys) and not card:
-            card = normalize_merchant(value)
-        elif '支払日' in key:
-            payment_date = value
+        if any(k in key for k in card_keys):
+            return normalize_merchant(fields_[1].strip())
 
-    return card, payment_date
+    return ''
 
 
 def parse_statement_bytes(data: bytes) -> ParsedStatement:
@@ -229,14 +207,13 @@ def parse_statement_bytes(data: bytes) -> ParsedStatement:
         data: CSV のバイト列
     """
     text, encoding = decode_bytes(data)
-    text = text.lstrip('﻿')
     lines = list(csv.reader(io.StringIO(text)))
     if not lines:
         raise CsvParseError('CSV が空です。')
 
     header_idx = find_header_index(lines)
     header = [h.strip() for h in lines[header_idx]]
-    card, payment_date = extract_meta(lines, header_idx)
+    card = extract_meta(lines, header_idx)
 
     date_col = find_column(header, CSV_DATE_COLUMNS)
     merchant_col = find_column(header, CSV_MERCHANT_COLUMNS)
@@ -298,19 +275,7 @@ def parse_statement_bytes(data: bytes) -> ParsedStatement:
         card=card,
         encoding=encoding,
         header_line=header_idx + 1,
-        header=header,
-        file_hash=compute_file_hash(data),
+        file_hash=hashlib.sha256(data).hexdigest(),
         skipped_lines=skipped,
-        payment_date=payment_date,
         warnings=warnings,
     )
-
-
-def parse_statement_file(path: Path | str) -> ParsedStatement:
-    """CSV ファイルを読み込んで解析する
-
-    Args:
-        path: CSV ファイルのパス
-    """
-    with open(path, 'rb') as f:
-        return parse_statement_bytes(f.read())

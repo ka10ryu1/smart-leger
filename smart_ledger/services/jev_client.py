@@ -28,10 +28,6 @@ class JevError(Exception):
     """Jev API 呼び出しに失敗した"""
 
 
-class JevNotConfigured(JevError):
-    """API キーが未設定"""
-
-
 @dataclass
 class JevChoice:
     """choice 型の回答"""
@@ -39,7 +35,6 @@ class JevChoice:
     choice: str
     confidence: float | None
     probabilities: dict[str, float]
-    model: str | None = None
 
 
 def build_request_body(
@@ -121,7 +116,7 @@ def parse_choice_response(payload: dict[str, Any], question_id: str = 'category'
     if confidence is None and choice in probabilities:
         confidence = probabilities[choice]
 
-    return JevChoice(choice=choice, confidence=confidence, probabilities=probabilities, model=payload.get('model'))
+    return JevChoice(choice=choice, confidence=confidence, probabilities=probabilities)
 
 
 class JevClient:
@@ -150,10 +145,9 @@ class JevClient:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip('/')
-        self.timeout = timeout
         self.max_retries = max_retries
         self.retry_statuses = retry_statuses
-        self.transport = transport
+        self.client = httpx.Client(timeout=timeout, transport=transport)  # 接続を使い回す
 
     @property
     def configured(self) -> bool:
@@ -176,8 +170,8 @@ class JevClient:
             usage_date: 利用日
             categories: カテゴリ名 → 説明文
         """
-        if self.api_key is None or not self.api_key:
-            raise JevNotConfigured('TYPESAFE_API_KEY が設定されていません')
+        if not self.configured:
+            raise JevError('TYPESAFE_API_KEY が設定されていません')
 
         body = build_request_body(merchant, amount, usage_date, categories, self.model)
         headers = {'Authorization': f'Bearer {self.api_key}', 'Content-Type': 'application/json'}
@@ -188,6 +182,9 @@ class JevClient:
             raise JevError('Jev API のレスポンスが JSON ではありません') from exc
 
         choice = parse_choice_response(payload)
+        if choice.choice not in categories:
+            raise JevError(f'Jev が不明なカテゴリを返しました: {choice.choice}')
+
         logger.info(
             'jev classified: merchant=%s choice=%s confidence=%s',
             merchant,
@@ -211,8 +208,7 @@ class JevClient:
         while True:
             attempt += 1
             try:
-                with httpx.Client(timeout=self.timeout, transport=self.transport) as client:
-                    response = client.post(self.endpoint, json=body, headers=headers)
+                response = self.client.post(self.endpoint, json=body, headers=headers)
             except httpx.HTTPError as exc:
                 if attempt > self.max_retries:
                     raise JevError(f'Jev API への接続に失敗しました: {exc.__class__.__name__}') from exc

@@ -8,10 +8,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
 
-import pandas as pd
-
+from ..constants import FALLBACK_CATEGORY, UNCLASSIFIED_LABEL
 from ..models import Allocation, LedgerData, Transaction
 
 
@@ -36,15 +34,6 @@ class MonthlySummary:
     diff_ratio: float | None
     categories: list[CategoryTotal] = field(default_factory=list)
     transaction_count: int = 0
-
-
-def month_of(d: date) -> str:
-    """日付を 'YYYY-MM' にする
-
-    Args:
-        d: 日付
-    """
-    return d.strftime('%Y-%m')
 
 
 def shift_month(month: str, delta: int) -> str:
@@ -76,7 +65,7 @@ def transactions_in_month(transactions: list[Transaction], month: str) -> list[T
         transactions: 明細
         month: 'YYYY-MM'
     """
-    return [t for t in transactions if month_of(t.usage_date) == month]
+    return [t for t in transactions if t.month == month]
 
 
 def total_spending(transactions: list[Transaction]) -> int:
@@ -88,39 +77,29 @@ def total_spending(transactions: list[Transaction]) -> int:
     return int(sum(t.amount for t in transactions))
 
 
-def category_rows(
-    transactions: list[Transaction],
-    allocations: list[Allocation],
-    unclassified_label: str = '未分類',
-    fallback_category: str = 'その他',
-) -> pd.DataFrame:
+def category_rows(transactions: list[Transaction], allocations: list[Allocation]) -> list[tuple[str, str, int]]:
     """カテゴリ集計用の行を返す（allocation がある明細は allocation 行に置き換える）
 
     Args:
         transactions: 明細
         allocations: 内訳
-        unclassified_label: カテゴリ未設定の明細に付けるラベル
-        fallback_category: カテゴリ未設定の内訳に付けるカテゴリ
 
     Returns:
-        transaction_id / category / amount の 3 列の DataFrame
+        (transaction_id, category, amount) のタプルのリスト
     """
     alloc_by_tx: dict[str, list[Allocation]] = {}
     for a in allocations:
         alloc_by_tx.setdefault(a.transaction_id, []).append(a)
 
-    records = []
+    rows: list[tuple[str, str, int]] = []
     for t in transactions:
         allocs = alloc_by_tx.get(t.id)
         if allocs:
-            for a in allocs:
-                records.append(
-                    {'transaction_id': t.id, 'category': a.category or fallback_category, 'amount': a.amount}
-                )
+            rows.extend((t.id, a.category or FALLBACK_CATEGORY, a.amount) for a in allocs)
         else:
-            records.append({'transaction_id': t.id, 'category': t.category or unclassified_label, 'amount': t.amount})
+            rows.append((t.id, t.category or UNCLASSIFIED_LABEL, t.amount))
 
-    return pd.DataFrame(records, columns=['transaction_id', 'category', 'amount'])
+    return rows
 
 
 def category_totals(
@@ -133,25 +112,19 @@ def category_totals(
         allocations: 内訳
         category_order: 同額のときの並び順に使うカテゴリ順
     """
-    df = category_rows(transactions, allocations)
-    if df.empty:
-        return []
+    rows = category_rows(transactions, allocations)
+    total = sum(amount for _, _, amount in rows)
+    amounts: dict[str, int] = {}
+    tx_ids: dict[str, set[str]] = {}
+    for tx_id, category, amount in rows:
+        amounts[category] = amounts.get(category, 0) + amount
+        tx_ids.setdefault(category, set()).add(tx_id)
 
-    grouped = df.groupby('category').agg(amount=('amount', 'sum'), count=('transaction_id', 'nunique'))
-    total = int(df['amount'].sum())
     order = {c: i for i, c in enumerate(category_order)}
-    items = []
-    for cat, row in grouped.iterrows():
-        amount = int(row['amount'])
-        items.append(
-            CategoryTotal(
-                category=str(cat),
-                amount=amount,
-                ratio=(amount / total) if total else 0.0,
-                count=int(row['count']),
-            )
-        )
-
+    items = [
+        CategoryTotal(category=cat, amount=amt, ratio=(amt / total) if total else 0.0, count=len(tx_ids[cat]))
+        for cat, amt in amounts.items()
+    ]
     items.sort(key=lambda c: (-c.amount, order.get(c.category, 999)))
     return items
 
@@ -186,18 +159,17 @@ def available_months(transactions: list[Transaction]) -> list[str]:
     Args:
         transactions: 明細
     """
-    return sorted({month_of(t.usage_date) for t in transactions}, reverse=True)
+    return sorted({t.month for t in transactions}, reverse=True)
 
 
-def monthly_trend(data: LedgerData, months: int = 6, end_month: str | None = None) -> list[tuple[str, int]]:
+def monthly_trend(data: LedgerData, end_month: str, months: int = 6) -> list[tuple[str, int]]:
     """end_month までの月別総支出を古い順に返す
 
     Args:
         data: 全データ
+        end_month: 最後の月（'YYYY-MM'）
         months: 何か月分返すか
-        end_month: 最後の月（None なら最新の明細がある月、それも無ければ今月）
     """
-    end_month = end_month or (available_months(data.transactions) or [date.today().strftime('%Y-%m')])[0]
     result = []
     for i in range(months - 1, -1, -1):
         m = shift_month(end_month, -i)

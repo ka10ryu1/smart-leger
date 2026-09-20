@@ -22,6 +22,7 @@ DEFAULT_CATEGORIES: tuple[str, ...] = (
     'その他',
 )
 FALLBACK_CATEGORY = 'その他'
+UNCLASSIFIED_LABEL = '未分類'  # category が空の明細の表示・集計用ラベル
 
 # Jev のカテゴリ選択に渡す説明文（criteria）。カテゴリ自体は categories シートで管理する
 CATEGORY_DESCRIPTIONS: dict[str, str] = {
@@ -50,7 +51,7 @@ SOURCE_LABELS: dict[str, str] = {
 }
 
 # ------------------------------------------------------------------- CSV
-CSV_ENCODINGS: tuple[str, ...] = ('utf-8-sig', 'cp932', 'shift_jis', 'utf-8')
+CSV_ENCODINGS: tuple[str, ...] = ('utf-8-sig', 'cp932')  # cp932 ⊇ shift_jis、utf-8-sig は BOM 無しも復号できる
 CSV_HEADER_MARKER = 'ご利用年月日'
 CSV_DATE_COLUMNS: tuple[str, ...] = ('ご利用年月日', '利用日', 'ご利用日', '利用年月日')
 CSV_MERCHANT_COLUMNS: tuple[str, ...] = ('ご利用箇所', 'ご利用先', '利用先', '加盟店名', 'ご利用店名', '利用店名')
@@ -85,6 +86,6 @@ EXCEL_COLUMN_WIDTHS: dict[str, int] = {
 
 # --------------------------------------------------------------- ログ / UI
 # 万一 13〜19 桁のカード番号らしき数字列がログに混ざった場合にマスクする
-LOG_CARD_NUMBER_PATTERN = re.compile(r'(?<!\d)(?:\d[ -]?){13,19}(?!\d)')
+LOG_CARD_NUMBER_PATTERN = re.compile(r'(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)')  # 13〜19 桁（区切りは空白か -）
 LOG_BEARER_PATTERN = re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.]+', re.IGNORECASE)
 MONTH_PATTERN = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')

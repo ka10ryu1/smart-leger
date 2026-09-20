@@ -95,3 +95,58 @@ def test_commit_records_import_and_card(tmp_path: Path, repo: ExcelRepository, f
     assert data.imports[0].row_count == 10
     assert all(t.card == 'テストカード' for t in data.transactions)
     assert all(t.classification_source == 'error' and t.category == 'その他' for t in data.transactions)
+
+
+def test_discard_ignores_traversal_token(tmp_path: Path) -> None:
+    """staging 外を指すトークンでは何も削除しない
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier(), 0.85))
+    outside = tmp_path / 'outside.json'
+    outside.write_text('{}', encoding='utf-8')
+    importer.discard('../outside')
+    assert outside.exists()
+    assert importer.load_preview('../outside') is None
+
+
+def test_same_rows_from_another_card_are_not_duplicates(
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+) -> None:
+    """別カードの CSV に同日・同加盟店・同金額の明細があっても重複扱いにしない
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier(), 0.85))
+    data = repo.load()
+    importer.commit(data, importer.preview(data, 'a.csv', fixture_csv_bytes))
+    other_card = fixture_csv_bytes.replace('テストカード'.encode('cp932'), 'カゾクカード'.encode('cp932'))
+    preview = importer.preview(data, 'b.csv', other_card)
+    assert preview.new_count == 10 and preview.duplicate_count == 0
+    assert importer.preview(data, 'c.csv', fixture_csv_bytes).duplicate_count == 10
+
+
+def test_commit_retry_reuses_classification_cache(
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+) -> None:
+    """保存失敗後に同じプレビューを確定し直しても分類器を呼び直さない（キャッシュはプレビュー時にだけクリア）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    stub = StubClassifier({})
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(stub, 0.85))
+    preview = importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
+    importer.commit(repo.load(), preview)
+    first_calls = len(stub.calls)
+    importer.commit(repo.load(), preview)  # 保存に失敗して再試行した想定
+    assert first_calls > 0 and len(stub.calls) == first_calls
+    importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
+    importer.commit(repo.load(), preview)
+    assert len(stub.calls) == first_calls * 2

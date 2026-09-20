@@ -67,17 +67,14 @@ def prune_backups(backup_dir: Path, stem: str, suffix: str, keep: int) -> None:
 class DropboxBackup:
     """Dropbox デスクトップアプリが同期するローカルフォルダにコピーする（API は使わない）"""
 
-    def __init__(self, dropbox_path: Path | None):
+    def __init__(self, dropbox_path: Path | None, keep: int = 20):
         """
         Args:
             dropbox_path: DROPBOX_SMART_LEDGER_PATH のパス（None ならバックアップをスキップ）
+            keep: Dropbox 側の backup/ に残す世代数（ローカルの世代数と同じ値を渡す）
         """
         self.dropbox_path = dropbox_path
-
-    @property
-    def enabled(self) -> bool:
-        """Dropbox パスが設定されているか"""
-        return self.dropbox_path is not None
+        self.keep = keep
 
     def copy(self, source: Path) -> dict[str, Path] | None:
         """latest/<name> と backup/<stem>_YYYYMMDD_HHMMSS<suffix> にコピーする
@@ -105,6 +102,7 @@ class DropboxBackup:
             shutil.copy2(source, tmp_latest)
             tmp_latest.replace(latest)
             shutil.copy2(source, backup)
+            prune_backups(backup_dir, source.stem, source.suffix, self.keep)
             logger.info('dropbox copy done: latest=%s backup=%s', latest, backup.name)
             return {'latest': latest, 'backup': backup}
         except OSError as exc:

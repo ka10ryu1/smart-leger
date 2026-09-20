@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from datetime import date
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook, load_workbook
 
 from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.models import Allocation, ImportRecord, MerchantRule, Transaction
 from smart_ledger.services.backup import DropboxBackup
-from smart_ledger.services.excel_repository import ExcelRepository, sheet_columns
+from smart_ledger.services.excel_repository import ExcelLockedError, ExcelRepository, sheet_columns
 
 
 def test_load_creates_workbook_with_all_sheets_and_categories(repo: ExcelRepository) -> None:
@@ -103,7 +105,6 @@ def test_dropbox_disabled_is_noop(repo: ExcelRepository) -> None:
     """
     repo.save(repo.load())
     assert repo.last_dropbox_result is None
-    assert DropboxBackup(None).enabled is False
     assert DropboxBackup(None).copy(repo.excel_path) is None
 
 
@@ -141,3 +142,69 @@ def test_load_tolerates_missing_columns(tmp_path: Path) -> None:
     data = ExcelRepository(path, backup_dir=tmp_path / 'b').load()
     assert data.transactions[0].id == 'tx_old'
     assert data.transactions[0].row_key == '' and data.transactions[0].memo == ''
+
+
+def test_formula_like_text_is_saved_as_string(repo: ExcelRepository) -> None:
+    """'=' 始まりの値は数式ではなく文字列として保存され、そのまま読み戻せる
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+    """
+    pattern = "=cmd|' /C calc'!A0"
+    data = repo.load()
+    data.merchant_rules.append(MerchantRule(pattern, 'その他', '2026-09-20 10:00:00'))
+    repo.save(data)
+    cell = load_workbook(repo.excel_path)['merchant_rules']['A2']
+    assert cell.data_type == 's' and cell.value == pattern
+    assert repo.load().merchant_rules[0].merchant_pattern == pattern
+
+
+def test_locked_excel_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """置換に失敗（Excel で開かれてロック）しても正本は変わらず一時ファイルも残らない
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+        monkeypatch: os.replace を PermissionError にする
+    """
+    data = repo.load()
+    before = repo.excel_path.read_bytes()
+    data.merchant_rules.append(MerchantRule('X', 'その他', '2026-09-20 10:00:00'))
+    monkeypatch.setattr(os, 'replace', lambda *a, **k: (_ for _ in ()).throw(PermissionError('locked')))
+    with pytest.raises(ExcelLockedError):
+        repo.save(data)
+
+    assert repo.excel_path.read_bytes() == before
+    assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
+
+
+def test_incomplete_row_is_skipped(repo: ExcelRepository) -> None:
+    """id が空の不完全な行（手入力の残骸など）は読み飛ばし、他の行は読める
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+    """
+    repo.load()
+    wb = load_workbook(repo.excel_path)
+    wb['transactions'].append([None, None, None, None, None, None, None, None, None, None, None, None, 'メモだけ'])
+    wb['merchant_rules'].append(['KYASH', 'その他', '2026-09-20 10:00:00'])
+    wb.save(repo.excel_path)
+    data = repo.load()
+    assert data.transactions == [] and len(data.merchant_rules) == 1
+
+
+def test_dropbox_backup_is_pruned(tmp_path: Path) -> None:
+    """Dropbox 側の backup/ も keep 世代だけ残す
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+    """
+    dropbox = tmp_path / 'Dropbox'
+    old = dropbox / 'backup' / 'household_20000101_000000.xlsx'
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b'old')
+    repo = ExcelRepository(
+        tmp_path / 'household.xlsx', backup_dir=tmp_path / 'b', dropbox=DropboxBackup(dropbox, keep=1)
+    )
+    repo.save(repo.load())
+    remaining = list((dropbox / 'backup').glob('household_*.xlsx'))
+    assert len(remaining) == 1 and remaining[0] != old

@@ -6,6 +6,7 @@ Jev はあくまで「未知の加盟店に初期カテゴリを付ける交換�
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -47,7 +48,7 @@ def to_date(value: Any) -> date:
     """Excel セルの値を date に変換する
 
     Args:
-        value: datetime / date / 'YYYY-MM-DD' または 'YYYY/MM/DD' 形式の文字列
+        value: datetime / date / 'YYYY-MM-DD' または 'YYYY/M/D' で始まる文字列（月日のゼロ埋めは不要）
     """
     if isinstance(value, datetime):
         return value.date()
@@ -55,8 +56,11 @@ def to_date(value: Any) -> date:
     if isinstance(value, date):
         return value
 
-    text = str(value).strip()[:10].replace('/', '-')
-    return date.fromisoformat(text)
+    match = re.match(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', str(value).strip())
+    if match is None:
+        raise ValueError(f'日付として読めません: {value}')
+
+    return date(*(int(part) for part in match.groups()))
 
 
 def to_int(value: Any) -> int:
@@ -317,7 +321,6 @@ class ClassificationResult:
     confidence: float | None
     source: str
     error: str | None = None
-    probabilities: dict[str, float] | None = None
 
 
 @dataclass
@@ -356,9 +359,9 @@ class LedgerData:
         """
         return [a for a in self.allocations if a.transaction_id == tx_id]
 
-    def existing_row_keys(self) -> set[str]:
-        """取込済み明細の row_key 集合を返す"""
-        return {tx.row_key for tx in self.transactions if tx.row_key}
+    def existing_row_keys(self) -> set[tuple[str, str]]:
+        """取込済み明細の (row_key, card) 集合を返す（同じカードの明細どうしで重複を判定する）"""
+        return {(tx.row_key, tx.card) for tx in self.transactions if tx.row_key}
 
     def has_file_hash(self, file_hash: str) -> ImportRecord | None:
         """同じファイルハッシュの取込履歴を探す

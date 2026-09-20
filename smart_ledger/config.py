@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +19,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 class Config:
     """アプリ全体の設定値"""
 
-    project_root: Path = PROJECT_ROOT
     data_dir: Path = PROJECT_ROOT / 'data'
     excel_path: Path = PROJECT_ROOT / 'data' / 'household.xlsx'
     backup_dir: Path = PROJECT_ROOT / 'data' / 'backup'
@@ -47,46 +47,29 @@ def env_path(name: str) -> Path | None:
     Args:
         name: 環境変数名
     """
-    value = os.environ.get(name, '').strip().strip('"')
+    value = os.environ.get(name, '').strip()
     if not value:
         return None
 
     return Path(value).expanduser()
 
 
-def env_float(name: str, default: float) -> float:
-    """環境変数を float として読む（変換できなければ既定値を使い警告を出す）
+def env_number(name: str, default: float, cast: Callable[[str], float]) -> float:
+    """環境変数を数値として読む（未設定なら既定値、変換できなければ既定値を使い警告を出す）
 
     Args:
         name: 環境変数名
         default: 既定値
+        cast: 文字列から数値への変換（int または float）
     """
     raw = os.environ.get(name, '')
     if not raw.strip():
         return default
 
     try:
-        return float(raw)
+        return cast(raw)
     except ValueError:
-        logger.warning('invalid float env: name=%s value=%s fallback=%s', name, raw, default)
-        return default
-
-
-def env_int(name: str, default: int) -> int:
-    """環境変数を int として読む（変換できなければ既定値を使い警告を出す）
-
-    Args:
-        name: 環境変数名
-        default: 既定値
-    """
-    raw = os.environ.get(name, '')
-    if not raw.strip():
-        return default
-
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning('invalid int env: name=%s value=%s fallback=%s', name, raw, default)
+        logger.warning('invalid number env: name=%s value=%s fallback=%s', name, raw, default)
         return default
 
 
@@ -98,10 +81,8 @@ def load_config(env_file: Path | None = None) -> Config:
     """
     load_dotenv(env_file or PROJECT_ROOT / '.env', override=False)
 
-    excel_path = env_path('SMART_LEDGER_EXCEL_PATH')
-    if excel_path is None:
-        excel_path = PROJECT_ROOT / 'data' / 'household.xlsx'
-    elif not excel_path.is_absolute():
+    excel_path = env_path('SMART_LEDGER_EXCEL_PATH') or Config.excel_path
+    if not excel_path.is_absolute():
         excel_path = PROJECT_ROOT / excel_path
 
     data_dir = excel_path.parent
@@ -114,11 +95,11 @@ def load_config(env_file: Path | None = None) -> Config:
         staging_dir=data_dir / 'staging',
         dropbox_path=env_path('DROPBOX_SMART_LEDGER_PATH'),
         typesafe_api_key=api_key,
-        typesafe_model=os.environ.get('TYPESAFE_MODEL', 'jev-latest').strip() or 'jev-latest',
-        typesafe_base_url=os.environ.get('TYPESAFE_BASE_URL', 'https://api.typesafe.ai').rstrip('/'),
-        confidence_threshold=env_float('CLASSIFICATION_CONFIDENCE_THRESHOLD', 0.85),
-        backup_generations=env_int('BACKUP_GENERATIONS', 20),
+        typesafe_model=os.environ.get('TYPESAFE_MODEL', '').strip() or Config.typesafe_model,
+        typesafe_base_url=os.environ.get('TYPESAFE_BASE_URL', Config.typesafe_base_url).rstrip('/'),
+        confidence_threshold=env_number('CLASSIFICATION_CONFIDENCE_THRESHOLD', Config.confidence_threshold, float),
+        backup_generations=int(env_number('BACKUP_GENERATIONS', Config.backup_generations, int)),
         secret_key=os.environ.get('FLASK_SECRET_KEY') or None,
-        port=env_int('SMART_LEDGER_PORT', 5000),
+        port=int(env_number('SMART_LEDGER_PORT', Config.port, int)),
         debug=os.environ.get('FLASK_DEBUG', '0').strip() in ('1', 'true', 'True'),
     )

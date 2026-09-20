@@ -1,7 +1,7 @@
 """CSV 取込のオーケストレーション（プレビュー → 確定）
 
 - ファイル SHA-256 を imports.file_hash と照合し、同一ファイルなら取込済みと判定
-- 明細単位は row_key（利用日・正規化加盟店・金額・同ファイル内の出現回数）で照合
+- 明細単位は row_key（利用日・正規化加盟店・金額・同ファイル内の出現回数）を同じカード名の明細どうしで照合
 - プレビュー結果は staging/<token>.json に一時保存し、「取り込む」で確定
 """
 
@@ -109,12 +109,13 @@ class Importer:
             content: CSV のバイト列
         """
         parsed = parse_statement_bytes(content)
+        self.pipeline.clear_cache()  # 前回の取込結果を持ち越さない（確定の再試行では使い回す）
         previous = data.has_file_hash(parsed.file_hash)
-        existing_by_key = {t.row_key: t for t in data.transactions if t.row_key}
+        existing_by_key = {(t.row_key, t.card): t for t in data.transactions if t.row_key}
 
         rows: list[PreviewRow] = []
         for r in parsed.rows:
-            existing = existing_by_key.get(r.row_key)
+            existing = existing_by_key.get((r.row_key, r.card))
             rows.append(
                 PreviewRow(
                     usage_date=r.usage_date.isoformat(),
@@ -166,8 +167,8 @@ class Importer:
         (self.staging_dir / f'{preview.token}.json').write_text(preview.to_json(), encoding='utf-8')
         self.cleanup_staging()
 
-    def load_preview(self, token: str) -> ImportPreview | None:
-        """トークンからプレビューを復元する（不正なトークンや期限切れは None）
+    def staging_path(self, token: str) -> Path | None:
+        """トークンに対応する staging ファイルのパスを返す（token_urlsafe 以外の文字を含むトークンは None）
 
         Args:
             token: preview() が発行したトークン
@@ -175,19 +176,29 @@ class Importer:
         if not token or not token.replace('-', '').replace('_', '').isalnum():
             return None
 
-        path = self.staging_dir / f'{token}.json'
-        if not path.exists():
+        return self.staging_dir / f'{token}.json'
+
+    def load_preview(self, token: str) -> ImportPreview | None:
+        """トークンからプレビューを復元する（不正なトークンや期限切れは None）
+
+        Args:
+            token: preview() が発行したトークン
+        """
+        path = self.staging_path(token)
+        if path is None or not path.exists():
             return None
 
         return ImportPreview.from_json(path.read_text(encoding='utf-8'))
 
     def discard(self, token: str) -> None:
-        """プレビューを破棄する
+        """プレビューを破棄する（不正なトークンは無視する）
 
         Args:
             token: 破棄するプレビューのトークン
         """
-        (self.staging_dir / f'{token}.json').unlink(missing_ok=True)
+        path = self.staging_path(token)
+        if path is not None:
+            path.unlink(missing_ok=True)
 
     def cleanup_staging(self) -> None:
         """staging_keep 件を超えた古いプレビューを削除する"""
@@ -207,12 +218,11 @@ class Importer:
         categories = data.category_names()
         import_id = new_id('imp')
         imported_at = now_iso()
-        self.pipeline.clear_cache()
 
         counts = {'imported': 0, 'dup': 0, 'auto': 0, 'review': 0, 'errors': 0, 'rules': 0}
         months: set[str] = set()
         for row in preview.rows:
-            if row.row_key in existing_keys:
+            if (row.row_key, row.card) in existing_keys:
                 counts['dup'] += 1
                 continue
 
@@ -235,7 +245,7 @@ class Importer:
                 row_key=row.row_key,
             )
             data.transactions.append(tx)
-            existing_keys.add(row.row_key)
+            existing_keys.add((row.row_key, row.card))
             months.add(tx.month)
             counts['imported'] += 1
             counts['rules'] += int(result.source == SOURCE_RULE)

@@ -178,7 +178,7 @@ def test_classifier_network_error_falls_back_safely(categories: list[str]) -> No
 
 
 def test_unknown_choice_maps_to_fallback(categories: list[str]) -> None:
-    """カテゴリ一覧に無い choice は その他 にする
+    """カテゴリ一覧に無い choice は その他 / source=error にして要確認に回す
 
     Args:
         categories: 初期カテゴリ
@@ -186,7 +186,7 @@ def test_unknown_choice_maps_to_fallback(categories: list[str]) -> None:
     result = JevClassifier(make_client(lambda r: choice_response('宇宙', 0.99))).classify(
         'x', 1, date(2026, 1, 1), categories
     )
-    assert result.category == 'その他'
+    assert result.category == 'その他' and result.source == 'error' and result.confidence is None
 
 
 def test_rule_takes_precedence_over_jev(categories: list[str]) -> None:
@@ -250,3 +250,25 @@ def test_match_rule_exact_partial_and_case() -> None:
     assert match_rule(rules, 'KYASH').category == 'その他'
     assert match_rule(rules, 'KYASH PRIME').category == '娯楽・サブスク'
     assert match_rule(rules, 'セブンイレブン') is None
+
+
+def test_retry_on_429_then_success(categories: list[str], monkeypatch: pytest.MonkeyPatch) -> None:
+    """retry_statuses のレスポンスは待ってから再試行し、成功すれば結果を返す（sleep は差し替える）
+
+    Args:
+        categories: 初期カテゴリ
+        monkeypatch: time.sleep を無効化する
+    """
+    from smart_ledger.services import jev_client
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(jev_client.time, 'sleep', sleeps.append)
+    statuses = iter([429, 200])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        status = next(statuses)
+        return choice_response('通信', 0.9) if status == 200 else httpx.Response(status, text='rate limited')
+
+    result = JevClassifier(make_client(handler, retries=1)).classify('x', 1, date(2026, 1, 1), categories)
+    assert result.category == '通信' and result.source == 'jev'
+    assert sleeps == [1.0]

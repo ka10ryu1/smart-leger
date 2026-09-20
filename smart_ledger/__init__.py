@@ -20,15 +20,9 @@ def create_app(config: Config | None = None) -> Flask:
     config = config or load_config()
     setup_logging(config)
 
-    app = Flask(
-        __name__,
-        template_folder='templates',
-        static_folder=str(config.static_dir),
-        static_url_path='/static',
-    )
+    app = Flask(__name__, static_folder=str(config.static_dir))
     app.config['SECRET_KEY'] = config.secret_key or secrets.token_hex(32)
     app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB
-    app.config['SMART_LEDGER_CONFIG'] = config
 
     from .routes import bp, build_services
 

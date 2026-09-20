@@ -3,7 +3,7 @@
     加盟店名正規化 → merchant_rules 検索 → 一致すれば rule
                                        → 一致しなければ Jev（交換可能な Classifier）
                                        → confidence >= 閾値 なら自動採用、未満なら要確認
-                                       → Jev エラー時は その他 / source=error / 要確認
+                                       → Jev エラー時（不明なカテゴリを返した場合を含む）は その他 / source=error / 要確認
 
 Jev を別モデルやルールエンジンに置き換える場合は Classifier Protocol を実装して差し替える
 """
@@ -74,15 +74,7 @@ class JevClassifier:
                 category=FALLBACK_CATEGORY, confidence=None, source=SOURCE_ERROR, error=repr(exc)
             )
 
-        if choice.choice not in categories:
-            logger.warning('jev returned unknown category: choice=%s', choice.choice)
-
-        return ClassificationResult(
-            category=choice.choice if choice.choice in categories else FALLBACK_CATEGORY,
-            confidence=choice.confidence,
-            source=SOURCE_JEV,
-            probabilities=choice.probabilities,
-        )
+        return ClassificationResult(category=choice.choice, confidence=choice.confidence, source=SOURCE_JEV)
 
 
 class NullClassifier:
@@ -154,7 +146,7 @@ class ClassificationPipeline:
             rules: 加盟店ルール
         """
         rule = match_rule(rules, merchant_normalized)
-        if rule is not None and rule.category:
+        if rule is not None:
             return ClassificationResult(category=rule.category, confidence=None, source=SOURCE_RULE)
 
         cached = self.cache.get(merchant_normalized)
@@ -168,5 +160,5 @@ class ClassificationPipeline:
         return result
 
     def clear_cache(self) -> None:
-        """取込ごとに加盟店キャッシュを空にする"""
+        """加盟店キャッシュを空にする（新しい CSV のプレビュー時に呼び、確定の再試行では使い回す）"""
         self.cache.clear()

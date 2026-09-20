@@ -75,10 +75,10 @@ def rows_as_dicts(ws: Worksheet, columns: tuple[str, ...]) -> Iterator[dict[str,
 
     names = [str(h).strip() if h is not None else '' for h in header]
     for values in rows:
-        if values is None or all(v is None or str(v).strip() == '' for v in values):
+        record = {name: value for name, value in zip(names, values) if name}
+        if record.get(columns[0]) in (None, ''):  # 先頭列（id / pattern など）が空の行は不完全なので読まない
             continue
 
-        record = {name: value for name, value in zip(names, values) if name}
         for col in columns:
             record.setdefault(col, None)
 
@@ -109,10 +109,6 @@ class ExcelRepository:
         self.last_dropbox_result: dict[str, Path] | None = None
 
     # ------------------------------------------------------------------ read
-    def exists(self) -> bool:
-        """正本ファイルが存在するか"""
-        return self.excel_path.exists()
-
     def load(self) -> LedgerData:
         """全シートを読み込む（正本が無ければ初期カテゴリ入りの新規ファイルを作成する）"""
         if not self.excel_path.exists():
@@ -186,16 +182,18 @@ class ExcelRepository:
         for name, columns in sheet_columns().items():
             ws = wb.create_sheet(name)
             ws.append(list(columns))
-            for row in sheet_rows[name]:
+            for row_no, row in enumerate(sheet_rows[name], start=2):
                 ws.append(row)
+                for col_no, value in enumerate(row, start=1):  # '=' 始まりの文字列を数式として保存しない
+                    if isinstance(value, str) and value.startswith('='):
+                        ws.cell(row=row_no, column=col_no).data_type = 's'
 
             for idx, col in enumerate(columns, start=1):
                 ws.column_dimensions[get_column_letter(idx)].width = EXCEL_COLUMN_WIDTHS.get(col, 14)
 
             ws.freeze_panes = 'A2'
-            amount_column = 'E' if name == 'transactions' else 'C' if name == 'allocations' else None
-            if amount_column is not None:
-                for cell in ws[amount_column][1:]:
+            if 'amount' in columns:
+                for cell in ws[get_column_letter(columns.index('amount') + 1)][1:]:
                     cell.number_format = '#,##0'
 
         return wb
@@ -220,7 +218,7 @@ class ExcelRepository:
             raise ExcelSaveError(f'Excel の一時保存に失敗しました: {exc}') from exc
 
         if self.excel_path.exists():
-            self.ensure_writable(self.excel_path, tmp_path)
+            self.ensure_writable(tmp_path)
             create_generation_backup(self.excel_path, self.backup_dir, self.backup_generations)
 
         try:
@@ -268,15 +266,14 @@ class ExcelRepository:
         finally:
             wb.close()
 
-    def ensure_writable(self, target: Path, tmp_path: Path) -> None:
+    def ensure_writable(self, tmp_path: Path) -> None:
         """正本が書き込み可能か確認する（Windows で Excel が開いていると排他ロックされる）
 
         Args:
-            target: 正本ファイル
             tmp_path: 失敗時に片付ける一時ファイル
         """
         try:
-            with open(target, 'r+b'):
+            with open(self.excel_path, 'r+b'):
                 pass
         except PermissionError as exc:
             tmp_path.unlink(missing_ok=True)

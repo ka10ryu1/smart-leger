@@ -6,7 +6,7 @@
 個人用 Web アプリです。
 
 - Windows 上で直接動作(WSL / Docker / SQL / クラウド DB 不要)
-- Python 3.12+ / Flask / pandas / openpyxl / httpx
+- Python 3.12+ / Flask / openpyxl / httpx
 - スマートフォン幅でも見やすいレスポンシブ UI
 - Dropbox デスクトップアプリの同期フォルダへ自動コピー(閲覧・バックアップ用)
 
@@ -59,7 +59,7 @@ cd smart-ledger
 
 `setup.ps1` は次を行います。
 
-1. Python 3.12+ を検出(`py -3.12` → `py -3` → `python` の順)
+1. Python 3.12+ を検出(`py -3.12` → `py -3.13` → `py -3` → `python` → `python3` の順)
 2. 仮想環境 `.venv` を作成
 3. `pip install -r requirements.txt`
 4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
@@ -133,7 +133,7 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 - 先頭にメタ情報(会員番号・対象カード・お支払日・今回お支払金額)があり、
   その後に **`ご利用年月日` から始まる明細ヘッダー行** が続く形式
 - ヘッダー行は固定行数ではなく `ご利用年月日` で検出します
-- 文字コードは UTF-8(BOM) → CP932 → Shift_JIS → UTF-8 の順に自動判定
+- 文字コードは UTF-8(BOM 有無どちらも) → CP932 の順に自動判定
 - ヘッダー直後のカード保有者行(`****-****-****-1234 氏名`)や合計行など、利用日として読めない行は無視
 - 取得項目: 利用日(`ご利用年月日`)、加盟店(`ご利用箇所`)、金額(`ご利用額`。空で `払戻額` があれば負の金額)、カード名(メタ情報の `対象カード`)
 - **月次集計は請求月ではなく各明細の利用日(usage_date)基準** です
@@ -143,6 +143,7 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 - CSV ファイル全体の SHA-256 を `imports.file_hash` と照合し、同一ファイルなら
   「このCSVはすでに取り込み済みです」と表示して取込を拒否
 - 明細単位では `row_key = SHA-256(利用日 | 正規化加盟店名 | 金額 | 同ファイル内での同組み合わせの出現回数)` で照合
+  - 照合は同じカード名(`card`)の明細どうしで行うため、別カードの同一明細(家族カード等)は重複扱いになりません
   - 同日・同加盟店・同金額の正当な複数決済は「出現回数」で区別されるため、両方とも取り込まれます
   - 別ファイル(例: 確定前と確定後の CSV)で重なる明細だけをスキップできます
 
@@ -219,6 +220,7 @@ Dropbox/SmartLedger/
 ```
 
 - 未設定(空)の場合はスキップします
+- Dropbox 側の `backup/` もローカルと同じ世代数(既定 20、`BACKUP_GENERATIONS`)だけ残し、古いものは削除します
 - Dropbox 側は閲覧・バックアップ用途です。Dropbox 側での編集は Smart Ledger に反映されません(正本は常に `data/household.xlsx`)
 
 ## ディレクトリ構成
@@ -242,7 +244,7 @@ smart-ledger/
 │  │  ├─ jev_client.py        # TypeSafe Jev API クライアント(httpx)
 │  │  ├─ classifier.py        # 分類パイプライン(rule → Jev → 閾値)
 │  │  ├─ importer.py          # プレビュー / 確定
-│  │  ├─ aggregation.py       # 月次・カテゴリ集計(pandas)
+│  │  ├─ aggregation.py       # 月次・カテゴリ集計(usage_date 基準)
 │  │  ├─ allocations.py       # 内訳の検証
 │  │  ├─ excel_repository.py  # household.xlsx の読み書き(atomic 保存)
 │  │  └─ backup.py            # 世代バックアップ・Dropbox コピー
@@ -271,10 +273,14 @@ smart-ledger/
 - Excel の read / write、世代バックアップ、旧形式ファイルの互換
 - Dropbox パス未設定時のスキップ・設定時のコピー
 - Web 画面の一連のフロー(取込 → ダッシュボード → 編集 → ルール → 内訳)
+- Jev が不明なカテゴリを返したときの要確認化、429 の再試行、確定再試行時のキャッシュ再利用
+- Excel ロック時に正本が変わらないこと、`=` 始まりの文字列が数式にならないこと、不完全行の読み飛ばし
+- 別カードの同一明細を重複扱いしないこと、外部 URL への戻り先と別サイトからの POST の拒否
+- ログのカード番号 / Bearer マスク、Excel セルの日付表現(`2026/8/1` 等)、空行挿入ツール
 
 ### 実 API を使うライブテスト
 
-`tests/test_jev_live.py` は TypeSafe Jev の実 API を呼びます(2 回、架空の加盟店名のみ送信)。
+`tests/test_jev_live.py` は TypeSafe Jev の実 API を呼びます(2 回、架空の加盟店名・金額・利用日のみ送信)。
 `.env` または環境変数に `TYPESAFE_API_KEY` があるときだけ実行され、無ければ自動でスキップされます。
 
 ```powershell
@@ -306,7 +312,7 @@ $env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
 ## ログ
 
 `logs/smart_ledger.log`(ローテーション 2MB × 5)。API キー・カード番号・会員番号は出力しません
-(CSV のメタ行は読み取らず、万一の数字列もフィルタでマスクします)。
+(CSV のメタ行から読むのは対象カード名のみで会員番号は読み取らず、万一の数字列もフィルタでマスクします)。
 
 ## セキュリティ / Git
 
@@ -319,6 +325,8 @@ $env:SMART_LEDGER_SKIP_LIVE = "1"; .\.venv\Scripts\python.exe -m pytest
 - `*.xlsx`、`*.csv`(実際のカード明細)
 
 例外として `tests/fixtures/` 配下の **架空データ** の CSV だけ Git 管理しています。
+
+別サイトのページからの POST(CSRF)は、`Origin` / `Referer` のホストがアプリ自身と一致しない場合に 403 で拒否します。
 
 ## MVP でやらないこと
 
