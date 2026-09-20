@@ -85,6 +85,19 @@
     });
   }
 
+  // ---- data-confirm 属性を持つフォームの送信確認（確認後はボタンを無効化して二重送信を防ぐ） ----
+  // 文言に加盟店名・ファイル名などユーザー由来の文字列を含めても、属性値は HTML エスケープされるため
+  // インラインの onsubmit="confirm('...')" と違って JS 文字列が壊れない
+  document.querySelectorAll('form[data-confirm]').forEach(function (form) {
+    form.addEventListener('submit', function (e) {
+      if (!window.confirm(form.dataset.confirm)) { e.preventDefault(); return; }
+      // 送信データの組み立て後に無効化する(同期で disabled にすると name 付きボタンの値が送られない)
+      setTimeout(function () {
+        form.querySelectorAll('button[type="submit"]').forEach(function (btn) { btn.disabled = true; });
+      }, 0);
+    });
+  });
+
   // ---- 取込確定ボタンの二重送信防止 ----
   var commitForm = document.getElementById('commit-form');
   if (commitForm) {

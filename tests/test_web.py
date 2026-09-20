@@ -75,7 +75,7 @@ def test_pages_render(client: FlaskClient) -> None:
 
 
 def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
-    """取込 → ダッシュボード → カテゴリ変更（ルール登録） → 内訳 → 再取込拒否 の一連のフロー
+    """取込 → ダッシュボード → カテゴリ変更（ルール登録） → 内訳 → 再取込拒否 → 取り消し → 再取込 の一連のフロー
 
     Args:
         client: テストクライアント
@@ -117,8 +117,28 @@ def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
     assert '内訳を保存しました' in response.get_data(as_text=True)
     assert '45,590' in client.get('/?month=2026-08').get_data(as_text=True)  # 総支出は変わらない
 
-    assert 'このCSVはすでに取り込み済みです' in upload(client, fixture_csv_bytes)
+    html = upload(client, fixture_csv_bytes)
+    assert 'このCSVはすでに取り込み済みです' in html and '件を取り込む' not in html
+    token = html.split('name="token" value="')[1].split('"')[0]  # キャンセルフォームのトークンで確定を試みる
+    body = client.post('/import/commit', data={'token': token}, follow_redirects=True).get_data(as_text=True)
+    assert '新規の明細がありません' in body
     assert '要確認' in client.get('/review').get_data(as_text=True)
+
+    # 取り消し: 確認文言に手動修正・内訳の件数が出て、明細と内訳が消え、ルールは残り、同じ CSV を再取込できる
+    history = client.get('/import').get_data(as_text=True)
+    assert (
+        '(10 件)を取り消しますか?\n手動で変更したカテゴリ・メモ 1 件が失われます。\n内訳 2 件も削除されます。'
+        in history
+    )
+    import_id = history.split('/undo"')[0].rsplit('/import/', 1)[1]
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '明細 10 件を削除しました。 内訳 2 件も削除しました。' in body
+    assert '取り消す' not in client.get('/import').get_data(as_text=True)
+    assert client.get('/transactions').get_data(as_text=True).count('編集') == 0
+    assert 'SAMPLE WALLET' in client.get('/rules').get_data(as_text=True)
+    assert '10 件を取り込む' in upload(client, fixture_csv_bytes)
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '取込履歴が見つかりません' in body
 
 
 def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
@@ -345,3 +365,19 @@ def test_always_scope_respects_more_specific_existing_rule(client: FlaskClient, 
     assert '一致する 5 件にも適用しました' in body
     cafe = client.get('/transactions?q=サンプルカフェ').get_data(as_text=True)
     assert '<span class="badge cat">外食</span>' in cafe and '<span class="badge cat">食費</span>' not in cafe
+
+
+def test_import_undo_confirm_text_is_attribute_safe(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """ファイル名に引用符があっても確認文言は data-confirm 属性にエスケープされて描画され、取り消せる
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    # " はテストクライアントのマルチパート解析でファイル名が途中で切れるため、JS 文字列を壊す ' だけを使う
+    import_csv(client, fixture_csv_bytes, "it's.csv")
+    history = client.get('/import').get_data(as_text=True)
+    assert 'data-confirm="取込「it&#39;s.csv」(10 件)を取り消しますか?' in history
+    import_id = history.split('/undo"')[0].rsplit('/import/', 1)[1]
+    body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
+    assert '明細 10 件を削除しました' in body

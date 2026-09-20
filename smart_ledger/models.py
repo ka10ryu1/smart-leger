@@ -377,12 +377,12 @@ class LedgerData:
         return {(tx.row_key, tx.card) for tx in self.transactions if tx.row_key}
 
     def has_file_hash(self, file_hash: str) -> ImportRecord | None:
-        """同じファイルハッシュの取込履歴を探す
+        """同じファイルハッシュの取込履歴を探す（複数あれば最新）
 
         Args:
             file_hash: CSV の SHA-256
         """
-        for imp in self.imports:
+        for imp in reversed(self.imports):
             if imp.file_hash == file_hash:
                 return imp
 

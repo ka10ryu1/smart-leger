@@ -67,7 +67,7 @@
     </div>
   </form>
   {% if allocations %}
-  <form method="post" action="{{ url_for('ledger.clear_allocations', tx_id=tx.id) }}" class="inline" onsubmit="return confirm('内訳を削除しますか?')">
+  <form method="post" action="{{ url_for('ledger.clear_allocations', tx_id=tx.id) }}" class="inline" data-confirm="内訳を削除しますか?">
     <input type="hidden" name="back" value="{{ back }}">
     <button class="btn btn-sm btn-danger" type="submit">内訳をすべて削除</button>
   </form>

@@ -1,8 +1,9 @@
 """CSV 取込のオーケストレーション（プレビュー → 確定）
 
-- ファイル SHA-256 を imports.file_hash と照合し、同一ファイルなら取込済みと判定
+- ファイル SHA-256 を imports.file_hash と照合し、同一ファイルなら取込済みと表示する（確定できるかは新規行の有無で決まる）
 - 明細単位は row_key（利用日・正規化加盟店・金額・同ファイル内の出現回数）を同じカード名の明細どうしで照合
 - プレビュー結果は staging/<token>.json に一時保存し、「取り込む」で確定
+- 取り消し（undo_import）は import_id 単位で明細・内訳・履歴を削除する（加盟店ルールは残す）
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..constants import SOURCE_ERROR, SOURCE_RULE
+from ..constants import SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
 from ..models import ImportRecord, LedgerData, Transaction, new_id, now_iso
 from .classifier import ClassificationPipeline
 from .csv_parser import parse_statement_bytes
@@ -70,6 +71,15 @@ class ImportPreview:
         raw = json.loads(text)
         raw['rows'] = [PreviewRow(**r) for r in raw['rows']]
         return cls(**raw)
+
+    def new_rows(self, data: LedgerData) -> list[PreviewRow]:
+        """プレビューで新規だった行のうち、今も取込済み明細に無いもの（プレビュー後に取り込まれた行を除く）
+
+        Args:
+            data: 現在の全データ
+        """
+        existing = data.existing_row_keys()
+        return [r for r in self.rows if not r.duplicate and (r.row_key, r.card) not in existing]
 
 
 @dataclass
@@ -209,25 +219,29 @@ class Importer:
 
     # ---------------------------------------------------------------- commit
     def commit(self, data: LedgerData, preview: ImportPreview) -> ImportResult:
-        """新規行だけ分類して LedgerData に追加する（保存は呼び出し側が行う）
+        """プレビューで新規だった行だけ分類して LedgerData に追加する（保存は呼び出し側が行う）
 
         Args:
             data: 追加先の全データ
             preview: 確定するプレビュー
+
+        Raises:
+            ValueError: 取り込める新規行が無い（プレビュー後に取り込まれた、または取込済み CSV）
         """
-        existing_keys = data.existing_row_keys()  # プレビュー後に変わっている可能性があるので再確認
+        rows = preview.new_rows(data)
+        if not rows:
+            raise ValueError(
+                '取り込める新規の明細がありません（プレビュー後に取り込まれたか、すでに取り込み済みの CSV です）。'
+            )
+
         categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
         import_id = new_id('imp')
         imported_at = now_iso()
         prepared_rules = prepare_rules(data.merchant_rules)
 
-        counts = {'imported': 0, 'dup': 0, 'auto': 0, 'review': 0, 'errors': 0, 'rules': 0}
+        counts = {'imported': 0, 'dup': len(preview.rows) - len(rows), 'auto': 0, 'review': 0, 'errors': 0, 'rules': 0}
         months: set[str] = set()
-        for row in preview.rows:
-            if (row.row_key, row.card) in existing_keys:
-                counts['dup'] += 1
-                continue
-
+        for row in rows:
             usage_date = date.fromisoformat(row.usage_date)
             result = self.pipeline.classify(row.merchant_normalized, row.amount, usage_date, categories, prepared_rules)
             tx = Transaction(
@@ -245,7 +259,6 @@ class Importer:
                 row_key=row.row_key,
             )
             data.transactions.append(tx)
-            existing_keys.add((row.row_key, row.card))
             months.add(tx.month)
             counts['imported'] += 1
             counts['rules'] += int(result.source == SOURCE_RULE)
@@ -285,3 +298,66 @@ class Importer:
             rule_matched=counts['rules'],
             months=sorted(months),
         )
+
+
+# ------------------------------------------------------------------- undo
+class ImportNotFoundError(ValueError):
+    """指定した import_id の取込履歴が無い"""
+
+
+@dataclass
+class ImportUndoSummary:
+    """取り消しで消える内容の件数（確認ダイアログと結果表示に使う）"""
+
+    filename: str
+    transactions: int
+    manual_edits: int  # カテゴリを手動変更した、またはメモを書いた明細
+    allocations: int
+
+
+def summarize_import(data: LedgerData, record: ImportRecord) -> ImportUndoSummary:
+    """取込に属する明細・手動修正・内訳の件数を数える
+
+    Args:
+        data: 全データ
+        record: 取込履歴
+    """
+    txs = [t for t in data.transactions if t.import_id == record.import_id]
+    tx_ids = {t.id for t in txs}
+    return ImportUndoSummary(
+        filename=record.filename,
+        transactions=len(txs),
+        manual_edits=sum(1 for t in txs if t.classification_source == SOURCE_MANUAL or t.memo),
+        allocations=sum(1 for a in data.allocations if a.transaction_id in tx_ids),
+    )
+
+
+def undo_import(data: LedgerData, import_id: str) -> ImportUndoSummary:
+    """取込を取り消す（明細・内訳・履歴を削除。加盟店ルールとカテゴリは残す）
+
+    履歴が消えるためファイルハッシュの重複判定も外れ、同じ CSV を取り込み直せる
+
+    Args:
+        data: 全データ
+        import_id: 取り消す取込 ID
+
+    Returns:
+        削除した件数のまとめ
+    """
+    record = next((i for i in data.imports if i.import_id == import_id), None)
+    if record is None:
+        raise ImportNotFoundError(f'取込履歴が見つかりません: {import_id}')
+
+    summary = summarize_import(data, record)
+    tx_ids = {t.id for t in data.transactions if t.import_id == import_id}
+    data.transactions = [t for t in data.transactions if t.import_id != import_id]
+    data.allocations = [a for a in data.allocations if a.transaction_id not in tx_ids]
+    data.imports = [i for i in data.imports if i.import_id != import_id]
+    logger.info(
+        'import undone: import id=%s transactions=%d allocations=%d manual edits=%d',
+        import_id,
+        summary.transactions,
+        summary.allocations,
+        summary.manual_edits,
+    )
+    return summary

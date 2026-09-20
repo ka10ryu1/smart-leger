@@ -1,5 +1,16 @@
 {% extends "base.html" %}
 {% block title %}CSV 取込{% endblock %}
+{# 取り消しボタン: 確認文言は data-confirm 属性に置き、app.js の共通ハンドラで confirm する
+   (ファイル名を JS 文字列に直接埋め込むと ' で壊れて確認なしで送信されるため)。手動修正・内訳がある場合は件数も出す #}
+{% macro undo_form(imp, summary) -%}
+{% set lines = ['取込「' ~ imp.filename ~ '」(' ~ summary.transactions ~ ' 件)を取り消しますか?'] %}
+{% if summary.manual_edits %}{% set lines = lines + ['手動で変更したカテゴリ・メモ ' ~ summary.manual_edits ~ ' 件が失われます。'] %}{% endif %}
+{% if summary.allocations %}{% set lines = lines + ['内訳 ' ~ summary.allocations ~ ' 件も削除されます。'] %}{% endif %}
+{% set lines = lines + ['加盟店ルールは残ります。'] %}
+<form method="post" action="{{ url_for('ledger.import_undo', import_id=imp.import_id) }}" class="inline" data-confirm="{{ lines|join('\n') }}">
+  <button class="btn btn-sm btn-danger" type="submit">取り消す</button>
+</form>
+{%- endmacro %}
 {% block content %}
 <h1>CSV 取込</h1>
 
@@ -22,14 +33,14 @@
     <dt>重複(取込済み)</dt><dd><strong class="{{ 'warn' if preview.duplicate_count }}">{{ preview.duplicate_count }} 件</strong></dd>
   </dl>
   {% if preview.already_imported %}
-    <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }})</div>
+    <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }}){% if preview.new_count %} 取り消しで消えた明細があるため、新規 {{ preview.new_count }} 件だけ取り込めます。{% endif %}</div>
   {% elif preview.new_count == 0 %}
     <div class="flash flash-warning">新規の明細はありません。すべて取込済みの明細と一致しました。</div>
   {% endif %}
   {% for w in preview.warnings %}<div class="flash flash-warning">{{ w }}</div>{% endfor %}
 
   <div class="actions">
-    {% if not preview.already_imported and preview.new_count > 0 %}
+    {% if preview.new_count > 0 %}
     <form method="post" action="{{ url_for('ledger.import_commit') }}" class="inline" id="commit-form">
       <input type="hidden" name="token" value="{{ preview.token }}">
       <button class="btn btn-primary" type="submit" id="commit-btn">{{ preview.new_count }} 件を取り込む</button>
@@ -81,19 +92,26 @@
   {% if imports %}
   <div class="tx-table-wrap">
   <table class="tx-table">
-    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th></tr></thead>
+    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th><th></th></tr></thead>
     <tbody>
     {% for i in imports %}
-      <tr><td class="nowrap">{{ i.imported_at }}</td><td>{{ i.filename }}</td><td>{{ i.card }}</td><td class="num">{{ i.row_count }}</td><td class="muted mono">{{ i.file_hash[:12] }}…</td></tr>
+      <tr>
+        <td class="nowrap">{{ i.imported_at }}</td><td>{{ i.filename }}</td><td>{{ i.card }}</td><td class="num">{{ i.row_count }}</td><td class="muted mono">{{ i.file_hash[:12] }}…</td>
+        <td>{{ undo_form(i, summaries[i.import_id]) }}</td>
+      </tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
   <ul class="tx-cards">
   {% for i in imports %}
-    <li class="tx-card"><div class="tx-card-row"><span class="tx-date">{{ i.imported_at[:10] }}</span><span class="tx-merchant">{{ i.filename }}</span><span class="tx-amount">{{ i.row_count }}<small>件</small></span></div></li>
+    <li class="tx-card">
+      <div class="tx-card-row"><span class="tx-date">{{ i.imported_at[:10] }}</span><span class="tx-merchant">{{ i.filename }}</span><span class="tx-amount">{{ i.row_count }}<small>件</small></span></div>
+      <div class="tx-card-row sub">{{ undo_form(i, summaries[i.import_id]) }}</div>
+    </li>
   {% endfor %}
   </ul>
+  <p class="hint">「取り消す」はその取込の明細と内訳を削除し、同じ CSV を取り込み直せる状態にします。手動で変更したカテゴリやメモも消えます。後の取込で「重複」としてスキップされた明細はこの取込の明細のまま残っているため、一緒に消えます。加盟店ルールは残ります。</p>
   {% else %}
   <p class="empty">まだ取込履歴はありません。</p>
   {% endif %}
