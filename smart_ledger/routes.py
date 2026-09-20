@@ -1,9 +1,8 @@
-"""Flask ルーティング。画面: ダッシュボード / 明細一覧 / CSV取込 / 要確認 / 明細編集 / ルール。"""
+"""Flask ルーティング（画面: ダッシュボード / 明細一覧 / CSV 取込 / 要確認 / 明細編集 / ルール）"""
 
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -17,9 +16,11 @@ from flask import (
     request,
     url_for,
 )
+from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
-from .models import SOURCE_MANUAL, SOURCE_RULE, LedgerData, Transaction, now_iso
+from .constants import MONTH_PATTERN, SOURCE_LABELS, SOURCE_MANUAL, SOURCE_RULE
+from .models import LedgerData, Transaction, now_iso
 from .services.aggregation import (
     available_months,
     month_label,
@@ -28,23 +29,24 @@ from .services.aggregation import (
     shift_month,
     transactions_in_month,
 )
-from .services.allocations import AllocationError, AllocationInput, replace_allocations, validate_allocations
+from .services.allocations import AllocationInput, replace_allocations, validate_allocations
 from .services.backup import DropboxBackup
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
-from .services.importer import Importer
+from .services.importer import Importer, ImportResult
 from .services.jev_client import JevClient
 from .services.merchant_rules import delete_rule, match_rule, upsert_rule
 
 logger = logging.getLogger(__name__)
 
-bp = Blueprint("ledger", __name__)
-_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+bp = Blueprint('ledger', __name__)
 
 
 @dataclass
 class Services:
+    """ルートから使うサービス群"""
+
     config: Config
     repo: ExcelRepository
     pipeline: ClassificationPipeline
@@ -52,6 +54,11 @@ class Services:
 
 
 def build_services(config: Config) -> Services:
+    """設定からリポジトリ・分類パイプライン・Importer を組み立てる
+
+    Args:
+        config: アプリ設定
+    """
     config.ensure_dirs()
     repo = ExcelRepository(
         config.excel_path,
@@ -60,182 +67,276 @@ def build_services(config: Config) -> Services:
         dropbox=DropboxBackup(config.dropbox_path),
     )
     jev = JevClient(config.typesafe_api_key, model=config.typesafe_model, base_url=config.typesafe_base_url)
-    fallback = (
-        JevClassifier(jev)
-        if jev.configured
-        else NullClassifier("TYPESAFE_API_KEY が未設定のため自動分類できませんでした")
-    )
+    if jev.configured:
+        fallback = JevClassifier(jev)
+    else:
+        fallback = NullClassifier('TYPESAFE_API_KEY が未設定のため自動分類できませんでした')
+
     pipeline = ClassificationPipeline(fallback, threshold=config.confidence_threshold)
     importer = Importer(config.staging_dir, pipeline)
     return Services(config=config, repo=repo, pipeline=pipeline, importer=importer)
 
 
 def svc() -> Services:
-    return current_app.extensions["smart_ledger"]
+    """現在のアプリに登録された Services を返す"""
+    return current_app.extensions['smart_ledger']
 
 
 # ------------------------------------------------------------------ filters
-@bp.app_template_filter("yen")
-def yen(value) -> str:
+@bp.app_template_filter('yen')
+def yen(value: object) -> str:
+    """金額を 3 桁区切りにする（変換できなければ '-'）
+
+    Args:
+        value: 金額
+    """
     try:
-        return f"{int(value):,}"
+        return f'{int(str(value)):,}'
     except (TypeError, ValueError):
-        return "-"
+        return '-'
 
 
-@bp.app_template_filter("pct")
-def pct(value) -> str:
+@bp.app_template_filter('pct')
+def pct(value: float | None) -> str:
+    """割合を '12.3%' 形式にする
+
+    Args:
+        value: 0〜1 の割合（None なら '-'）
+    """
     if value is None:
-        return "-"
-    return f"{value * 100:.1f}%"
+        return '-'
+
+    return f'{value * 100:.1f}%'
 
 
-@bp.app_template_filter("conf")
-def conf(value) -> str:
+@bp.app_template_filter('conf')
+def conf(value: float | None) -> str:
+    """confidence を小数 2 桁にする
+
+    Args:
+        value: confidence（None なら '-'）
+    """
     if value is None:
-        return "-"
-    return f"{float(value):.2f}"
+        return '-'
+
+    return f'{float(value):.2f}'
 
 
-@bp.app_template_filter("month_label")
-def _month_label(value: str) -> str:
+@bp.app_template_filter('month_label')
+def month_label_filter(value: str) -> str:
+    """'YYYY-MM' を '2026年9月' にする
+
+    Args:
+        value: 年月
+    """
     return month_label(value)
 
 
-@bp.app_template_filter("source_label")
+@bp.app_template_filter('source_label')
 def source_label(value: str) -> str:
-    return {"rule": "ルール", "jev": "Jev", "manual": "手動", "error": "エラー"}.get(value, value or "未分類")
+    """classification_source を表示用ラベルにする
+
+    Args:
+        value: rule / jev / manual / error
+    """
+    return SOURCE_LABELS.get(value, value or '未分類')
 
 
 @bp.app_context_processor
-def inject_globals():
+def inject_globals() -> dict[str, object]:
+    """全テンプレートで使う設定値を注入する"""
     config = svc().config
     return {
-        "threshold": config.confidence_threshold,
-        "dropbox_enabled": config.dropbox_path is not None,
-        "jev_enabled": bool(config.typesafe_api_key),
-        "excel_path": str(config.excel_path),
+        'threshold': config.confidence_threshold,
+        'dropbox_enabled': config.dropbox_path is not None,
+        'jev_enabled': bool(config.typesafe_api_key),
+        'excel_path': str(config.excel_path),
     }
 
 
 # ------------------------------------------------------------------- errors
 @bp.app_errorhandler(ExcelLockedError)
-def handle_locked(exc):
-    logger.error("Excel ロック: %s", exc)
-    return render_template("error.html", title="Excel を書き込めません", message=str(exc)), 423
+def handle_locked(exc: ExcelLockedError) -> tuple[str, int]:
+    """Excel ロック時のエラー画面
+
+    Args:
+        exc: 発生した例外
+    """
+    logger.error('excel locked: error=%s', exc)
+    return render_template('error.html', title='Excel を書き込めません', message=str(exc)), 423
 
 
 @bp.app_errorhandler(ExcelSaveError)
-def handle_save_error(exc):
-    logger.error("Excel 保存失敗: %s", exc)
-    return render_template("error.html", title="Excel の保存に失敗しました", message=str(exc)), 500
+def handle_save_error(exc: ExcelSaveError) -> tuple[str, int]:
+    """Excel 保存失敗時のエラー画面
+
+    Args:
+        exc: 発生した例外
+    """
+    logger.error('excel save failed: error=%s', exc)
+    return render_template('error.html', title='Excel の保存に失敗しました', message=str(exc)), 500
 
 
 # ------------------------------------------------------------------ helpers
-def _current_month(data: LedgerData) -> str:
-    month = request.args.get("month", "").strip()
-    if _MONTH_RE.match(month):
+def current_month(data: LedgerData) -> str:
+    """クエリの month（'YYYY-MM'）を返す（無効なら最新の明細がある月、それも無ければ今月）
+
+    Args:
+        data: 全データ
+    """
+    month = request.args.get('month', '').strip()
+    if MONTH_PATTERN.match(month):
         return month
+
     months = available_months(data.transactions)
-    return months[0] if months else date.today().strftime("%Y-%m")
+    return months[0] if months else date.today().strftime('%Y-%m')
 
 
-def _load() -> LedgerData:
+def load_data() -> LedgerData:
+    """Excel から全データを読み込む"""
     return svc().repo.load()
 
 
-def _needs_review(data: LedgerData) -> list[Transaction]:
-    th = svc().config.confidence_threshold
-    return [t for t in data.transactions if t.needs_review(th)]
+def needs_review(data: LedgerData) -> list[Transaction]:
+    """要確認の明細を返す
+
+    Args:
+        data: 全データ
+    """
+    threshold = svc().config.confidence_threshold
+    return [t for t in data.transactions if t.needs_review(threshold)]
+
+
+def parse_allocation_form() -> list[AllocationInput]:
+    """内訳フォーム（alloc_category / alloc_amount / alloc_memo の並列リスト）を読む
+
+    Returns:
+        空行を除いた内訳入力（金額が数値でなければ ValueError）
+    """
+    categories = request.form.getlist('alloc_category')
+    amounts = request.form.getlist('alloc_amount')
+    memos = request.form.getlist('alloc_memo')
+    items: list[AllocationInput] = []
+    for i in range(max(len(categories), len(amounts))):
+        cat = categories[i].strip() if i < len(categories) else ''
+        amt_raw = (amounts[i] if i < len(amounts) else '').replace(',', '').strip()
+        memo = memos[i].strip() if i < len(memos) else ''
+        if not cat and not amt_raw and not memo:
+            continue
+
+        try:
+            amt = int(amt_raw) if amt_raw else 0
+        except ValueError as exc:
+            raise ValueError(f'内訳の金額が数値ではありません: {amt_raw}') from exc
+
+        items.append(AllocationInput(category=cat, amount=amt, memo=memo))
+
+    return items
 
 
 # ------------------------------------------------------------------- routes
-@bp.route("/")
-def dashboard():
-    data = _load()
-    month = _current_month(data)
-    summary = monthly_summary(data, month)
-    month_txs = sorted(transactions_in_month(data.transactions, month), key=lambda t: (t.usage_date, t.id), reverse=True)
-    alloc_ids = {a.transaction_id for a in data.allocations}
+@bp.route('/')
+def dashboard() -> str:
+    """ダッシュボード（月次集計）"""
+    data = load_data()
+    month = current_month(data)
+    month_txs = sorted(
+        transactions_in_month(data.transactions, month), key=lambda t: (t.usage_date, t.id), reverse=True
+    )
     return render_template(
-        "dashboard.html",
+        'dashboard.html',
         month=month,
         prev_month=shift_month(month, -1),
         next_month=shift_month(month, 1),
-        summary=summary,
+        summary=monthly_summary(data, month),
         recent=month_txs[:10],
         trend=monthly_trend(data, months=6, end_month=month),
-        review_count=len(_needs_review(data)),
+        review_count=len(needs_review(data)),
         months=available_months(data.transactions),
-        alloc_ids=alloc_ids,
+        alloc_ids={a.transaction_id for a in data.allocations},
         has_data=bool(data.transactions),
     )
 
 
-@bp.route("/transactions")
-def transactions():
-    data = _load()
-    month = request.args.get("month", "").strip()
-    if month and not _MONTH_RE.match(month):
-        month = ""
-    category = request.args.get("category", "").strip()
-    query = request.args.get("q", "").strip().casefold()
-    source = request.args.get("source", "").strip()
+@bp.route('/transactions')
+def transactions() -> str:
+    """明細一覧（月・カテゴリ・分類元・加盟店名で絞り込み）"""
+    data = load_data()
+    month = request.args.get('month', '').strip()
+    if month and not MONTH_PATTERN.match(month):
+        month = ''
+
+    category = request.args.get('category', '').strip()
+    query = request.args.get('q', '').strip().casefold()
+    source = request.args.get('source', '').strip()
     txs = list(data.transactions)
     if month:
         txs = transactions_in_month(txs, month)
+
     if category:
         txs = [t for t in txs if t.category == category]
+
     if source:
         txs = [t for t in txs if t.classification_source == source]
+
     if query:
         txs = [t for t in txs if query in t.merchant_normalized.casefold() or query in t.merchant_raw.casefold()]
+
     txs.sort(key=lambda t: (t.usage_date, t.id), reverse=True)
-    alloc_ids = {a.transaction_id for a in data.allocations}
     return render_template(
-        "transactions.html",
+        'transactions.html',
         transactions=txs,
         total=sum(t.amount for t in txs),
         months=available_months(data.transactions),
         categories=data.category_names(),
-        filters={"month": month, "category": category, "q": request.args.get("q", ""), "source": source},
-        alloc_ids=alloc_ids,
+        filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
+        alloc_ids={a.transaction_id for a in data.allocations},
     )
 
 
-@bp.route("/review")
-def review():
-    data = _load()
-    txs = sorted(_needs_review(data), key=lambda t: (t.usage_date, t.id), reverse=True)
-    return render_template("review.html", transactions=txs, categories=data.category_names())
+@bp.route('/review')
+def review() -> str:
+    """要確認一覧"""
+    data = load_data()
+    txs = sorted(needs_review(data), key=lambda t: (t.usage_date, t.id), reverse=True)
+    return render_template('review.html', transactions=txs, categories=data.category_names())
 
 
-@bp.route("/transactions/<tx_id>/edit")
-def edit_transaction(tx_id: str):
-    data = _load()
+@bp.route('/transactions/<tx_id>/edit')
+def edit_transaction(tx_id: str) -> str:
+    """明細編集画面
+
+    Args:
+        tx_id: 明細 ID
+    """
+    data = load_data()
     tx = data.find_transaction(tx_id)
     if tx is None:
         abort(404)
-    allocations = data.allocations_for(tx_id)
-    rule = match_rule(data.merchant_rules, tx.merchant_normalized)
+
     same_merchant = [t for t in data.transactions if t.merchant_normalized == tx.merchant_normalized and t.id != tx.id]
     return render_template(
-        "edit.html",
+        'edit.html',
         tx=tx,
-        allocations=allocations,
+        allocations=data.allocations_for(tx_id),
         categories=data.category_names(),
-        rule=rule,
+        rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),
-        back=request.args.get("back") or request.referrer or url_for("ledger.transactions"),
+        back=request.args.get('back') or request.referrer or url_for('ledger.transactions'),
     )
 
 
-@bp.route("/transactions/<tx_id>/category", methods=["POST"])
-def update_category(tx_id: str):
-    category = request.form.get("category", "").strip()
-    scope = request.form.get("scope", "once")
-    memo = request.form.get("memo", "").strip()
-    back = request.form.get("back") or url_for("ledger.transactions")
+@bp.route('/transactions/<tx_id>/category', methods=['POST'])
+def update_category(tx_id: str) -> WerkzeugResponse:
+    """カテゴリ変更（scope=once なら今回だけ、always ならルール登録して同じ加盟店にも反映）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    category = request.form.get('category', '').strip()
+    scope = request.form.get('scope', 'once')
+    memo = request.form.get('memo', '').strip()
+    back = request.form.get('back') or url_for('ledger.transactions')
     applied_others = 0
 
     def mutate(data: LedgerData) -> None:
@@ -243,194 +344,220 @@ def update_category(tx_id: str):
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
+
         if category not in data.category_names():
-            raise ValueError(f"不明なカテゴリです: {category}")
+            raise ValueError(f'不明なカテゴリです: {category}')
+
         tx.category = category
         tx.confidence = None
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
-        if scope == "always":
-            upsert_rule(data, tx.merchant_normalized, category)
-            # 同じ加盟店で手動修正されていない明細にも反映する
-            for other in data.transactions:
-                if (
-                    other.id != tx.id
-                    and other.merchant_normalized == tx.merchant_normalized
-                    and other.classification_source != SOURCE_MANUAL
-                    and other.category != category
-                ):
-                    other.category = category
-                    other.confidence = None
-                    other.classification_source = SOURCE_RULE
-                    applied_others += 1
+        if scope != 'always':
+            return
+
+        upsert_rule(data, tx.merchant_normalized, category)
+        for other in data.transactions:  # 同じ加盟店で手動修正されていない明細にも反映する
+            is_target = (
+                other.id != tx.id
+                and other.merchant_normalized == tx.merchant_normalized
+                and other.classification_source != SOURCE_MANUAL
+                and other.category != category
+            )
+            if not is_target:
+                continue
+
+            other.category = category
+            other.confidence = None
+            other.classification_source = SOURCE_RULE
+            applied_others += 1
 
     try:
         svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
-        flash(str(exc), "error")
-        return redirect(url_for("ledger.edit_transaction", tx_id=tx_id, back=back))
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
-    if scope == "always":
-        msg = f"カテゴリを「{category}」に変更し、この加盟店のルールを登録しました。"
+    if scope == 'always':
+        msg = f'カテゴリを「{category}」に変更し、この加盟店のルールを登録しました。'
         if applied_others:
-            msg += f" 同じ加盟店の {applied_others} 件にも適用しました。"
+            msg += f' 同じ加盟店の {applied_others} 件にも適用しました。'
     else:
-        msg = f"カテゴリを「{category}」に変更しました(今回だけ)。"
-    flash(msg, "success")
+        msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
+
+    flash(msg, 'success')
     return redirect(back)
 
 
-@bp.route("/transactions/<tx_id>/allocations", methods=["POST"])
-def update_allocations(tx_id: str):
-    back = request.form.get("back") or url_for("ledger.transactions")
-    categories = request.form.getlist("alloc_category")
-    amounts = request.form.getlist("alloc_amount")
-    memos = request.form.getlist("alloc_memo")
-    items: list[AllocationInput] = []
-    for i in range(max(len(categories), len(amounts))):
-        cat = categories[i].strip() if i < len(categories) else ""
-        amt_raw = (amounts[i] if i < len(amounts) else "").replace(",", "").strip()
-        memo = memos[i].strip() if i < len(memos) else ""
-        if not cat and not amt_raw and not memo:
-            continue
-        try:
-            amt = int(amt_raw) if amt_raw else 0
-        except ValueError:
-            flash(f"内訳の金額が数値ではありません: {amt_raw}", "error")
-            return redirect(url_for("ledger.edit_transaction", tx_id=tx_id, back=back))
-        items.append(AllocationInput(category=cat, amount=amt, memo=memo))
+@bp.route('/transactions/<tx_id>/allocations', methods=['POST'])
+def update_allocations(tx_id: str) -> WerkzeugResponse:
+    """内訳を保存する（合計が明細金額と一致しなければエラー表示）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    back = request.form.get('back') or url_for('ledger.transactions')
+    try:
+        items = parse_allocation_form()
+    except ValueError as exc:
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
     def mutate(data: LedgerData) -> None:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
-        new_allocs = validate_allocations(tx, items, data.category_names())
-        replace_allocations(data, tx_id, new_allocs)
+
+        replace_allocations(data, tx_id, validate_allocations(tx, items, data.category_names()))
 
     try:
         svc().repo.update(mutate)
-    except AllocationError as exc:
-        flash(str(exc), "error")
-        return redirect(url_for("ledger.edit_transaction", tx_id=tx_id, back=back))
-    flash("内訳を保存しました。" if items else "内訳を削除しました。", "success")
-    return redirect(url_for("ledger.edit_transaction", tx_id=tx_id, back=back))
+    except ValueError as exc:  # AllocationError
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+
+    flash('内訳を保存しました。' if items else '内訳を削除しました。', 'success')
+    return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
 
-@bp.route("/transactions/<tx_id>/allocations/clear", methods=["POST"])
-def clear_allocations(tx_id: str):
-    back = request.form.get("back") or url_for("ledger.transactions")
+@bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])
+def clear_allocations(tx_id: str) -> WerkzeugResponse:
+    """内訳をすべて削除する
+
+    Args:
+        tx_id: 明細 ID
+    """
+    back = request.form.get('back') or url_for('ledger.transactions')
     svc().repo.update(lambda data: replace_allocations(data, tx_id, []))
-    flash("内訳を削除しました。", "success")
-    return redirect(url_for("ledger.edit_transaction", tx_id=tx_id, back=back))
+    flash('内訳を削除しました。', 'success')
+    return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
 
 # ------------------------------------------------------------------- import
-@bp.route("/import")
-def import_page():
-    data = _load()
+@bp.route('/import')
+def import_page() -> str:
+    """CSV 取込画面（ファイル選択と取込履歴）"""
+    data = load_data()
     imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
-    return render_template("import.html", preview=None, imports=imports)
+    return render_template('import.html', preview=None, imports=imports)
 
 
-@bp.route("/import/preview", methods=["POST"])
-def import_preview():
-    file = request.files.get("csv_file")
+@bp.route('/import/preview', methods=['POST'])
+def import_preview() -> str | WerkzeugResponse:
+    """CSV を解析してプレビューを表示する（この時点では保存しない）"""
+    file = request.files.get('csv_file')
     if file is None or not file.filename:
-        flash("CSV ファイルを選択してください。", "error")
-        return redirect(url_for("ledger.import_page"))
+        flash('CSV ファイルを選択してください。', 'error')
+        return redirect(url_for('ledger.import_page'))
+
     content = file.read()
     if not content:
-        flash("空のファイルです。", "error")
-        return redirect(url_for("ledger.import_page"))
-    data = _load()
+        flash('空のファイルです。', 'error')
+        return redirect(url_for('ledger.import_page'))
+
+    data = load_data()
     try:
         preview = svc().importer.preview(data, file.filename, content)
     except CsvParseError as exc:
-        flash(f"CSV を解析できませんでした: {exc}", "error")
-        return redirect(url_for("ledger.import_page"))
+        flash(f'CSV を解析できませんでした: {exc}', 'error')
+        return redirect(url_for('ledger.import_page'))
+
     imports = sorted(data.imports, key=lambda i: i.imported_at, reverse=True)
-    return render_template("import.html", preview=preview, imports=imports)
+    return render_template('import.html', preview=preview, imports=imports)
 
 
-@bp.route("/import/commit", methods=["POST"])
-def import_commit():
-    token = request.form.get("token", "")
+@bp.route('/import/commit', methods=['POST'])
+def import_commit() -> WerkzeugResponse:
+    """プレビューの新規明細だけを分類して Excel に保存する"""
+    token = request.form.get('token', '')
     preview = svc().importer.load_preview(token)
     if preview is None:
-        flash("プレビュー情報が見つかりません。もう一度 CSV を選択してください。", "error")
-        return redirect(url_for("ledger.import_page"))
-    if preview.already_imported:
-        flash("このCSVはすでに取り込み済みです。", "warning")
-        return redirect(url_for("ledger.import_page"))
+        flash('プレビュー情報が見つかりません。もう一度 CSV を選択してください。', 'error')
+        return redirect(url_for('ledger.import_page'))
 
-    result_holder = {}
+    if preview.already_imported:
+        flash('このCSVはすでに取り込み済みです。', 'warning')
+        return redirect(url_for('ledger.import_page'))
+
+    results: list[ImportResult] = []
 
     def mutate(data: LedgerData) -> None:
         if data.has_file_hash(preview.file_hash):
-            raise CsvParseError("このCSVはすでに取り込み済みです。")
-        result_holder["result"] = svc().importer.commit(data, preview)
+            raise CsvParseError('このCSVはすでに取り込み済みです。')
+
+        results.append(svc().importer.commit(data, preview))
 
     try:
         svc().repo.update(mutate)
     except CsvParseError as exc:
-        flash(str(exc), "warning")
-        return redirect(url_for("ledger.import_page"))
+        flash(str(exc), 'warning')
+        return redirect(url_for('ledger.import_page'))
+
     svc().importer.discard(token)
-    result = result_holder["result"]
-    dropbox = svc().repo.last_dropbox_result
+    result = results[0]
     msg = (
-        f"{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、"
-        f"ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。"
+        f'{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、'
+        f'ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。'
     )
     if result.jev_errors:
-        msg += f" Jev 分類エラー {result.jev_errors} 件は「その他」として要確認に入っています。"
-    if dropbox:
-        msg += " Dropbox へもコピーしました。"
-    flash(msg, "success")
+        msg += f' Jev 分類エラー {result.jev_errors} 件は「その他」として要確認に入っています。'
+
+    if svc().repo.last_dropbox_result:
+        msg += ' Dropbox へもコピーしました。'
+
+    flash(msg, 'success')
     if result.needs_review:
-        return redirect(url_for("ledger.review"))
-    target_month = result.months[-1] if result.months else None
-    return redirect(url_for("ledger.dashboard", month=target_month) if target_month else url_for("ledger.dashboard"))
+        return redirect(url_for('ledger.review'))
+
+    if result.months:
+        return redirect(url_for('ledger.dashboard', month=result.months[-1]))
+
+    return redirect(url_for('ledger.dashboard'))
 
 
-@bp.route("/import/discard", methods=["POST"])
-def import_discard():
-    svc().importer.discard(request.form.get("token", ""))
-    flash("取込をキャンセルしました。", "info")
-    return redirect(url_for("ledger.import_page"))
+@bp.route('/import/discard', methods=['POST'])
+def import_discard() -> WerkzeugResponse:
+    """プレビューを破棄する"""
+    svc().importer.discard(request.form.get('token', ''))
+    flash('取込をキャンセルしました。', 'info')
+    return redirect(url_for('ledger.import_page'))
 
 
 # -------------------------------------------------------------------- rules
-@bp.route("/rules")
-def rules():
-    data = _load()
+@bp.route('/rules')
+def rules() -> str:
+    """加盟店ルール一覧"""
+    data = load_data()
     return render_template(
-        "rules.html",
+        'rules.html',
         rules=sorted(data.merchant_rules, key=lambda r: r.created_at, reverse=True),
         categories=data.category_names(),
     )
 
 
-@bp.route("/rules/add", methods=["POST"])
-def add_rule():
-    pattern = request.form.get("merchant_pattern", "").strip()
-    category = request.form.get("category", "").strip()
+@bp.route('/rules/add', methods=['POST'])
+def add_rule() -> WerkzeugResponse:
+    """ルールを手動で追加する"""
+    pattern = request.form.get('merchant_pattern', '').strip()
+    category = request.form.get('category', '').strip()
     if not pattern or not category:
-        flash("加盟店パターンとカテゴリを入力してください。", "error")
-        return redirect(url_for("ledger.rules"))
+        flash('加盟店パターンとカテゴリを入力してください。', 'error')
+        return redirect(url_for('ledger.rules'))
+
     svc().repo.update(lambda data: upsert_rule(data, pattern, category))
-    flash(f"ルールを登録しました: {pattern} → {category}", "success")
-    return redirect(url_for("ledger.rules"))
+    flash(f'ルールを登録しました: {pattern} → {category}', 'success')
+    return redirect(url_for('ledger.rules'))
 
 
-@bp.route("/rules/delete", methods=["POST"])
-def remove_rule():
-    pattern = request.form.get("merchant_pattern", "")
+@bp.route('/rules/delete', methods=['POST'])
+def remove_rule() -> WerkzeugResponse:
+    """ルールを削除する"""
+    pattern = request.form.get('merchant_pattern', '')
     svc().repo.update(lambda data: delete_rule(data, pattern))
-    flash("ルールを削除しました。", "success")
-    return redirect(url_for("ledger.rules"))
+    flash('ルールを削除しました。', 'success')
+    return redirect(url_for('ledger.rules'))
 
 
-@bp.route("/health")
-def health():
-    return {"status": "ok", "time": now_iso()}
+@bp.route('/health')
+def health() -> dict[str, str]:
+    """起動確認用エンドポイント（Flask が JSON にする）"""
+    return {'status': 'ok', 'time': now_iso()}

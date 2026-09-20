@@ -1,73 +1,106 @@
+"""Flask test client による画面フローのテスト"""
+
 from __future__ import annotations
 
 import io
 
 import pytest
+from flask.testing import FlaskClient
 
 from smart_ledger import create_app
+from smart_ledger.config import Config
 
 
 @pytest.fixture
-def client(test_config):
+def client(test_config: Config) -> FlaskClient:
+    """テスト用アプリのクライアント
+
+    Args:
+        test_config: 一時ディレクトリを使う設定
+    """
     app = create_app(test_config)
-    app.config["TESTING"] = True
+    app.config['TESTING'] = True
     return app.test_client()
 
 
-def test_web_flow(client, fixture_csv_bytes):
-    assert client.get("/").status_code == 200
-    assert client.get("/transactions").status_code == 200
-    assert client.get("/review").status_code == 200
-    assert client.get("/rules").status_code == 200
-    assert client.get("/import").status_code == 200
+def upload(client: FlaskClient, content: bytes, filename: str = 'test.csv') -> str:
+    """CSV をアップロードしてプレビュー HTML を返す
 
-    # プレビュー(保存されない)
-    r = client.post("/import/preview", data={"csv_file": (io.BytesIO(fixture_csv_bytes), "test.csv")}, content_type="multipart/form-data")
-    assert r.status_code == 200
-    html = r.get_data(as_text=True)
-    assert "10 件を取り込む" in html
-    assert "テストデンリヨク 8ガツブン" in html
+    Args:
+        client: テストクライアント
+        content: CSV のバイト列
+        filename: ファイル名
+    """
+    response = client.post(
+        '/import/preview', data={'csv_file': (io.BytesIO(content), filename)}, content_type='multipart/form-data'
+    )
+    assert response.status_code == 200
+    return response.get_data(as_text=True)
+
+
+def test_pages_render(client: FlaskClient) -> None:
+    """データが無い状態でも各画面が 200 を返す
+
+    Args:
+        client: テストクライアント
+    """
+    for path in ('/', '/transactions', '/review', '/rules', '/import', '/health'):
+        assert client.get(path).status_code == 200
+
+
+def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """取込 → ダッシュボード → カテゴリ変更（ルール登録） → 内訳 → 再取込拒否 の一連のフロー
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    html = upload(client, fixture_csv_bytes)
+    assert '10 件を取り込む' in html
+    assert 'テストデンリヨク 8ガツブン' in html
     token = html.split('name="token" value="')[1].split('"')[0]
-    assert client.get("/transactions").get_data(as_text=True).count("編集") == 0
+    assert client.get('/transactions').get_data(as_text=True).count('編集') == 0  # プレビューでは保存されない
 
-    # 取込確定(APIキー無し → 全件要確認)
-    r = client.post("/import/commit", data={"token": token}, follow_redirects=True)
-    assert r.status_code == 200
-    body = r.get_data(as_text=True)
-    assert "10 件を取り込みました" in body
+    body = client.post('/import/commit', data={'token': token}, follow_redirects=True).get_data(as_text=True)
+    assert '10 件を取り込みました' in body
 
-    # ダッシュボード: 8月 総支出 = 7850+3240+10000+5000+5000+10000+4500 = 45590
-    dash = client.get("/?month=2026-08").get_data(as_text=True)
-    assert "45,590" in dash
+    # 8月 総支出 = 7850+3240+10000+5000+5000+10000+4500 = 45590
+    assert '45,590' in client.get('/?month=2026-08').get_data(as_text=True)
 
-    # 明細編集: 今後この加盟店も → ルール登録
-    # SAMPLE WALLET の明細を編集対象にする
-    tx_html = client.get("/transactions?q=SAMPLE").get_data(as_text=True)
-    tx_id = tx_html.split("/transactions/")[1].split("/edit")[0]
-    r = client.post(f"/transactions/{tx_id}/category", data={"category": "その他", "scope": "always", "memo": "wallet"}, follow_redirects=True)
-    assert "ルールを登録しました" in r.get_data(as_text=True)
-    assert "SAMPLE WALLET" in client.get("/rules").get_data(as_text=True)
-
-    # 内訳: 合計不一致はエラー、一致すれば保存
-    r = client.post(
-        f"/transactions/{tx_id}/allocations",
-        data={"alloc_category": ["食費", "外食"], "alloc_amount": ["6000", "3000"], "alloc_memo": ["", ""]},
+    tx_html = client.get('/transactions?q=SAMPLE').get_data(as_text=True)
+    tx_id = tx_html.split('/transactions/')[1].split('/edit')[0]
+    response = client.post(
+        f'/transactions/{tx_id}/category',
+        data={'category': 'その他', 'scope': 'always', 'memo': 'wallet'},
         follow_redirects=True,
     )
-    assert "一致しません" in r.get_data(as_text=True)
-    r = client.post(
-        f"/transactions/{tx_id}/allocations",
-        data={"alloc_category": ["食費", "外食"], "alloc_amount": ["6000", "4000"], "alloc_memo": ["a", "b"]},
+    assert 'ルールを登録しました' in response.get_data(as_text=True)
+    assert 'SAMPLE WALLET' in client.get('/rules').get_data(as_text=True)
+
+    response = client.post(
+        f'/transactions/{tx_id}/allocations',
+        data={'alloc_category': ['食費', '外食'], 'alloc_amount': ['6000', '3000'], 'alloc_memo': ['', '']},
         follow_redirects=True,
     )
-    assert "内訳を保存しました" in r.get_data(as_text=True)
-    dash = client.get("/?month=2026-08").get_data(as_text=True)
-    assert "45,590" in dash  # 総支出は変わらない(二重計上なし)
+    assert '一致しません' in response.get_data(as_text=True)
 
-    # 再取込は拒否
-    r = client.post("/import/preview", data={"csv_file": (io.BytesIO(fixture_csv_bytes), "test.csv")}, content_type="multipart/form-data")
-    assert "このCSVはすでに取り込み済みです" in r.get_data(as_text=True)
+    response = client.post(
+        f'/transactions/{tx_id}/allocations',
+        data={'alloc_category': ['食費', '外食'], 'alloc_amount': ['6000', '4000'], 'alloc_memo': ['a', 'b']},
+        follow_redirects=True,
+    )
+    assert '内訳を保存しました' in response.get_data(as_text=True)
+    assert '45,590' in client.get('/?month=2026-08').get_data(as_text=True)  # 総支出は変わらない
 
-    # 要確認から確定
-    review = client.get("/review").get_data(as_text=True)
-    assert "要確認" in review
+    assert 'このCSVはすでに取り込み済みです' in upload(client, fixture_csv_bytes)
+    assert '要確認' in client.get('/review').get_data(as_text=True)
+
+
+def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
+    """不正な month はエラーにならず無視される
+
+    Args:
+        client: テストクライアント
+    """
+    assert client.get('/?month=abcdefg').status_code == 200
+    assert client.get('/transactions?month=2026-13').status_code == 200
