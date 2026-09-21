@@ -50,11 +50,7 @@ Jev は「未知の加盟店に初期カテゴリを付ける交換可能な分�
 - PowerShell(Windows 標準の Windows PowerShell 5.1 または PowerShell 7)
 - [uv 0.12.17 以上](https://docs.astral.sh/uv/getting-started/installation/)(Python 3.12 は uv が自動で用意します)
 
-uv が未導入の場合は、PowerShell で次を実行してから PowerShell を開き直してください。
-
-```powershell
-winget install --id=astral-sh.uv -e
-```
+uv が未導入でも、`setup.cmd` の実行中に winget でインストールできます。確認が表示されたら `Y` または Enter キーを押してください。
 
 ### 1. リポジトリを取得
 
@@ -86,7 +82,7 @@ cd smart-ledger
 - **「ポート 5000 は使用中ですが Smart Ledger の応答を確認できませんでした」と出る**: 別のプログラムが同じポートを使っているか、応答しなくなった Smart Ledger のウィンドウが残っています。該当ウィンドウを閉じるか、`.env` の `SMART_LEDGER_PORT` を別の番号に変えてください。「ポート 5000 を使用できません(予約済み、または権限がありません)」の場合は OS がそのポートを予約しているので、ポート番号を変えてください
 - **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
 - **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行してから `setup.cmd` を再実行してください。`git clone` したファイルには付きません
-- **uv が見つかりません**: `winget install --id=astral-sh.uv -e` を実行し、PowerShell を開き直してから `setup.cmd` を再実行してください
+- **uv が見つかりません**: `setup.cmd` の確認で `Y` または Enter キーを押すと winget で自動インストールされます。`winget` 自体が見つからない場合は、Microsoft Store の App Installer を更新してください
 - **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら `winget upgrade --id=astral-sh.uv -e` で更新してください。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
 
 ### 3. .env を設定

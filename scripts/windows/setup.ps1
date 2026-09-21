@@ -35,12 +35,27 @@ try {
     # --- Python・仮想環境・依存パッケージ ------------------------------------
     $uv = Get-Command "uv" -ErrorAction SilentlyContinue
     if (-not $uv) {
-        Write-Host "uv が見つかりません。" -ForegroundColor Red
-        Write-Host "  1. PowerShell で次を実行: winget install --id=astral-sh.uv -e"
-        Write-Host "  2. PowerShell を開き直す"
-        Write-Host "  3. setup.cmd を再実行"
-        Write-Host "  詳細: https://docs.astral.sh/uv/getting-started/installation/"
-        Fail "uv のインストールが必要です"
+        $installUv = Read-Host "uv が見つかりません。winget でインストールしますか？ [Y/n]"
+        if ($installUv -eq "" -or $installUv -match "^[Yy]$") {
+            $winget = Get-Command "winget" -ErrorAction SilentlyContinue
+            if (-not $winget) {
+                Fail "winget が見つかりません。App Installer を更新するか、https://learn.microsoft.com/ja-jp/windows/package-manager/winget/ を確認してください"
+            }
+
+            Write-Host "uv をインストールしています..."
+            $ErrorActionPreference = "Continue"
+            & $winget.Source install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements
+            $wingetExit = $LASTEXITCODE
+            $ErrorActionPreference = "Stop"
+            if ($wingetExit -ne 0) { Fail "uv のインストールに失敗しました(終了コード $wingetExit)" }
+
+            # winget が PATH を更新しても、既存の PowerShell プロセスには反映されないことがある
+            $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+            $uv = Get-Command "uv" -ErrorAction SilentlyContinue
+            if (-not $uv) { Fail "uv をインストールしましたが、コマンドを検出できません。PowerShell を開き直して setup.cmd を再実行してください" }
+        } else {
+            Fail "uv のインストールが必要です"
+        }
     }
     Write-Host "uv を使用します: $($uv.Source)"
     Write-Host "Python 3.12 と依存パッケージを同期しています(初回は数分かかることがあります)..."
