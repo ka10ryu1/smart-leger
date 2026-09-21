@@ -370,7 +370,7 @@ def transactions() -> str:
         transactions=txs,
         total=sum(t.amount for t in txs),
         months=available_months(data.transactions),
-        categories=data.category_names(),
+        categories=[*data.category_names(), UNCLASSIFIED_LABEL],  # 空カテゴリの明細も絞り込めるようにする
         filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
         alloc_ids={a.transaction_id for a in data.allocations},
     )

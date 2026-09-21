@@ -101,8 +101,11 @@ def edit_category(data: LedgerData, name: str, new_name: str, description: str) 
         名称変更を伝播した件数（明細 + ルール + 内訳。説明だけの更新なら 0）
     """
     category = require_category(data, name)
-    new_name = validate_category_name(new_name)
+    new_name = normalize_merchant(new_name)
     renaming = new_name != normalize_merchant(name)  # シート上の名前が未正規化でも説明だけの保存を名称変更にしない
+    if renaming:  # 旧規則で登録済みの名前は改名しない限り検証しない（説明だけ更新できる）
+        new_name = validate_category_name(new_name)
+
     if renaming and name == FALLBACK_CATEGORY:
         raise CategoryError(f'「{FALLBACK_CATEGORY}」は分類エラー時の受け皿として使うため名称変更できません。')
 

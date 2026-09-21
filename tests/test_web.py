@@ -201,8 +201,9 @@ def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
     assert client.get('/?month=abcdefg').status_code == 200
     assert client.get('/transactions?month=2026-13').status_code == 200
     assert client.get('/annual?year=20xx').status_code == 200
-    assert client.get('/annual?year=²²²²').status_code == 200  # isdigit は真だが int() できない
-    assert '0年の総支出' not in client.get('/annual?year=0000').get_data(as_text=True)  # 前年リンクが負の年になる
+    assert client.get('/annual?year=²²²²').status_code == 200  # 上付き数字は \d（Nd）に含まれず int() もできない
+    fallback = client.get('/annual?year=0000').get_data(as_text=True)  # 0000 は無効（前年リンクが負の年になる）
+    assert f'{date.today().year}年の総支出' in fallback  # 明細が無いので今年に戻る
     assert '2026年の総支出' in client.get('/annual?year=２０２６').get_data(as_text=True)  # 全角数字は 2026 として読む
 
 
@@ -486,6 +487,7 @@ def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -
     assert '2027年の明細はありません' in client.get('/annual?year=2027').get_data(as_text=True)
     unclassified = client.get('/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E').get_data(as_text=True)
     assert 'tx_none' in unclassified  # 未分類セルのリンク先に category が空の明細が出る
+    assert '<option value="未分類" selected>' in unclassified  # 絞り込みフォームでも 未分類 が選ばれている
 
     csv_response = client.get('/annual/export.csv?year=2026')
     assert csv_response.status_code == 200

@@ -75,6 +75,12 @@ def test_category_name_rejects_formula_prefix(data: LedgerData) -> None:
 
     assert data.category_names()[0] == '食費'  # 検証に落ちたので元のまま
 
+    data.categories.append(Category('=旧名', 11))  # 旧規則で登録済みの名前は説明だけ更新でき、改名先だけ検証される
+    assert edit_category(data, '=旧名', '=旧名', '説明だけ') == 0
+    assert data.category_criteria()['=旧名'] == '説明だけ'
+    with pytest.raises(CategoryError):
+        edit_category(data, '=旧名', '=新名', '')
+
 
 def test_edit_category_renames_and_propagates(data: LedgerData) -> None:
     """名称変更は明細・ルール・内訳にも伝播し、説明も更新される
