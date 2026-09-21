@@ -52,8 +52,8 @@ def annual_xlsx(table: AnnualTable) -> bytes:
         table: 年間表
     """
     wb = Workbook()
-    ws = wb.active
-    ws.title = f'{table.year}年'
+    wb.remove(wb.worksheets[0])  # 既定シートを捨てて年をタイトルにしたシートだけにする（active は None を返しうる）
+    ws = wb.create_sheet(f'{table.year}年')
     for row in annual_table_rows(table):
         ws.append(row)
 
