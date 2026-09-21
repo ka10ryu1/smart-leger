@@ -183,3 +183,24 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 }
 
 .rule-pattern-input { flex: 1 1 200px; min-width: 0; font-size: 0.85rem; }
+
+/* 年間表: 12 か月 × カテゴリ。表が収まらないときは横スクロールし、カテゴリ列を固定する（スクロールのヒントは狭い画面だけ表示） */
+.stats-2 { grid-template-columns: repeat(2, 1fr); }
+.export-links { display: flex; gap: 0.4rem; }
+.annual-wrap { overflow-x: auto; }
+.annual-table { border-collapse: collapse; font-size: 0.85rem; min-width: 100%; }
+.annual-table th, .annual-table td { padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+.annual-table thead th { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+.annual-table tr > th:first-child { text-align: left; font-weight: 600; color: var(--text); }
+.annual-table tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--card); }
+.annual-table .total { font-weight: 700; background: #f9fafb; }
+.annual-table tfoot th, .annual-table tfoot td { border-top: 2px solid var(--line); border-bottom: 0; font-weight: 700; }
+.annual-table a { color: inherit; }
+.annual-table a:hover { color: var(--primary); text-decoration: underline; }
+.scroll-hint { display: none; }
+@media (max-width: 720px) {
+  .stats-2 .stat:first-child { grid-column: auto; }
+  .scroll-hint { display: block; }
+  .annual-table { font-size: 0.8rem; }
+  .annual-table th, .annual-table td { padding: 0.35rem 0.4rem; }
+}

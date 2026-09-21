@@ -69,7 +69,7 @@ def test_pages_render(client: FlaskClient) -> None:
     Args:
         client: テストクライアント
     """
-    for path in ('/', '/transactions', '/review', '/rules', '/categories', '/import', '/health'):
+    for path in ('/', '/annual', '/transactions', '/review', '/rules', '/categories', '/import', '/health'):
         assert client.get(path).status_code == 200
 
     assert client.get('/health').get_json()['app'] == 'smart-ledger'  # app.py の二重起動判定が照合する
@@ -200,6 +200,11 @@ def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
     """
     assert client.get('/?month=abcdefg').status_code == 200
     assert client.get('/transactions?month=2026-13').status_code == 200
+    assert client.get('/annual?year=20xx').status_code == 200
+    assert client.get('/annual?year=²²²²').status_code == 200  # 上付き数字は \d（Nd）に含まれず int() もできない
+    fallback = client.get('/annual?year=0000').get_data(as_text=True)  # 0000 は無効（前年リンクが負の年になる）
+    assert f'{date.today().year}年の総支出' in fallback  # 明細が無いので今年に戻る
+    assert '2026年の総支出' in client.get('/annual?year=２０２６').get_data(as_text=True)  # 全角数字は 2026 として読む
 
 
 def test_rule_add_rejects_unknown_category(client: FlaskClient) -> None:
@@ -459,3 +464,40 @@ def test_import_undo_confirm_text_is_attribute_safe(client: FlaskClient, fixture
     import_id = history.split('/undo"')[0].rsplit('/import/', 1)[1]
     body = client.post(f'/import/{import_id}/undo', follow_redirects=True).get_data(as_text=True)
     assert '明細 10 件を削除しました' in body
+
+
+def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """年間表は取り込んだ年を既定で表示し、セルは月・カテゴリの明細一覧へリンクし、CSV / Excel を返す
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
+
+    def add_unclassified(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_none', date(2026, 7, 2), 'N', 'N', 300, ''))
+
+    client.application.extensions['smart_ledger'].repo.update(add_unclassified)
+    html = client.get('/annual').get_data(as_text=True)
+    assert '2026年の総支出' in html
+    assert '45,590' in html  # 8 月の月間総支出（test_web_flow と同じ値）
+    assert 'href="/transactions?month=2026-08&amp;category=' in html
+    assert 'href="/annual?year=2025"' in html and 'href="/annual?year=2027"' in html
+    assert '2027年の明細はありません' in client.get('/annual?year=2027').get_data(as_text=True)
+    unclassified = client.get('/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E').get_data(as_text=True)
+    assert 'tx_none' in unclassified  # 未分類セルのリンク先に category が空の明細が出る
+    assert '<option value="未分類" selected>' in unclassified  # 絞り込みフォームでも 未分類 が選ばれている
+
+    csv_response = client.get('/annual/export.csv?year=2026')
+    assert csv_response.status_code == 200
+    assert csv_response.headers['Content-Type'] == 'text/csv; charset=utf-8'
+    assert csv_response.headers['Content-Disposition'] == 'attachment; filename="smart_ledger_2026.csv"'
+    text = csv_response.get_data().decode('utf-8-sig')
+    assert text.startswith('カテゴリ,1月,') and '月間総支出,' in text and ',45590,' in text
+
+    xlsx_response = client.get('/annual/export.xlsx?year=2026')
+    assert xlsx_response.status_code == 200
+    assert xlsx_response.mimetype == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    assert xlsx_response.get_data()[:2] == b'PK'
+    assert client.get('/annual/export.pdf').status_code == 404

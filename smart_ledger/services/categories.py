@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY
+from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY, FORMULA_PREFIXES, UNCLASSIFIED_LABEL
 from ..models import Category, LedgerData
 from .normalize import normalize_merchant
 
@@ -50,18 +50,38 @@ def category_usage(data: LedgerData) -> dict[str, Counter[str]]:
     return usage
 
 
+def validate_category_name(name: str, formula_prefixes: str = FORMULA_PREFIXES) -> str:
+    """カテゴリ名を正規化して検証する（空文字・数式として解釈される先頭文字・予約語「未分類」は CategoryError）
+
+    Args:
+        name: 入力されたカテゴリ名
+        formula_prefixes: 先頭に使えない文字
+
+    Returns:
+        正規化後（NFKC・空白整理）のカテゴリ名
+    """
+    name = normalize_merchant(name)  # カテゴリ名も加盟店名と同じ規則（NFKC・空白整理）で正規化する
+    if not name:
+        raise CategoryError('カテゴリ名を入力してください。')
+
+    if name[0] in formula_prefixes:
+        raise CategoryError(f'カテゴリ名の先頭に {formula_prefixes} の文字は使えません（数式として扱われます）。')
+
+    if name == UNCLASSIFIED_LABEL:
+        raise CategoryError(f'「{UNCLASSIFIED_LABEL}」はカテゴリが空の明細を指す予約語のため使えません。')
+
+    return name
+
+
 def add_category(data: LedgerData, name: str, description: str = '') -> Category:
-    """カテゴリを末尾に追加する（空文字・重複は CategoryError）
+    """カテゴリを末尾に追加する（空文字・数式になる先頭文字・予約語・重複は CategoryError）
 
     Args:
         data: 対象の LedgerData
         name: カテゴリ名
         description: Jev に渡す説明（任意）
     """
-    name = normalize_merchant(name)  # カテゴリ名も加盟店名と同じ規則（NFKC・空白整理）で正規化する
-    if not name:
-        raise CategoryError('カテゴリ名を入力してください。')
-
+    name = validate_category_name(name)
     if any(normalize_merchant(c.category) == name for c in data.categories):  # シート上の未正規化名とも比較
         raise CategoryError(f'カテゴリ「{name}」は既に存在します。')
 
@@ -85,10 +105,10 @@ def edit_category(data: LedgerData, name: str, new_name: str, description: str) 
     """
     category = require_category(data, name)
     new_name = normalize_merchant(new_name)
-    if not new_name:
-        raise CategoryError('カテゴリ名を入力してください。')
-
     renaming = new_name != normalize_merchant(name)  # シート上の名前が未正規化でも説明だけの保存を名称変更にしない
+    if renaming:  # 旧規則で登録済みの名前は改名しない限り検証しない（説明だけ更新できる）
+        new_name = validate_category_name(new_name)
+
     if renaming and name == FALLBACK_CATEGORY:
         raise CategoryError(f'「{FALLBACK_CATEGORY}」は分類エラー時の受け皿として使うため名称変更できません。')
 

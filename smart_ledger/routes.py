@@ -1,4 +1,4 @@
-"""Flask ルーティング（画面: ダッシュボード / 明細一覧 / CSV 取込 / 要確認 / 明細編集 / ルール）"""
+"""Flask ルーティング（画面: ダッシュボード / 年間表 / 明細一覧 / CSV 取込 / 要確認 / 明細編集 / ルール / カテゴリ）"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 
 from flask import (
     Blueprint,
+    Response,
     abort,
     current_app,
     flash,
@@ -29,10 +30,13 @@ from .constants import (
     SOURCE_MANUAL,
     SOURCE_RULE,
     UNCLASSIFIED_LABEL,
+    YEAR_PATTERN,
 )
 from .models import ImportRecord, LedgerData, Transaction, now_iso
 from .services.aggregation import (
+    annual_table,
     available_months,
+    available_years,
     month_label,
     monthly_summary,
     monthly_trend,
@@ -51,6 +55,7 @@ from .services.categories import (
 from .services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from .services.csv_parser import CsvParseError
 from .services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
+from .services.export import annual_csv, annual_xlsx
 from .services.importer import Importer, ImportUndoSummary, summarize_import, undo_import
 from .services.jev_client import JevClient
 from .services.merchant_rules import delete_rule, match_rule, preview_rule_targets, rule_targets, upsert_rule
@@ -219,6 +224,21 @@ def current_month(data: LedgerData) -> str:
     return months[0] if months else date.today().strftime('%Y-%m')
 
 
+def current_year(data: LedgerData) -> int:
+    """クエリの year（4 桁の数字。0000 は無効）を返す（無効なら最新の明細がある年、それも無ければ今年）
+
+    Args:
+        data: 全データ
+    """
+    text = request.args.get('year', '').strip()
+    year = int(text) if YEAR_PATTERN.match(text) else 0  # 0000 は 0 になり無効扱い（前年リンクが負の年になるため）
+    if year:
+        return year
+
+    years = available_years(data.transactions)
+    return years[0] if years else date.today().year
+
+
 def load_data() -> LedgerData:
     """Excel から全データを読み込む"""
     return svc().repo.load()
@@ -285,6 +305,41 @@ def dashboard() -> str:
     )
 
 
+@bp.route('/annual')
+def annual() -> str:
+    """年間表（対象年の 12 か月 × カテゴリのマトリクス）"""
+    data = load_data()
+    return render_template(
+        'annual.html',
+        table=annual_table(data, current_year(data)),
+        years=available_years(data.transactions),
+        has_data=bool(data.transactions),
+    )
+
+
+@bp.route('/annual/export.<any(csv, xlsx):fmt>')
+def annual_export(fmt: str) -> Response:
+    """年間表を CSV / Excel でダウンロードする（月間総支出・カテゴリ別の両方を 1 枚の表に含む）
+
+    Args:
+        fmt: 'csv' または 'xlsx'（それ以外は routing が 404 にする）
+    """
+    data = load_data()
+    year = current_year(data)
+    table = annual_table(data, year)
+    if fmt == 'csv':
+        body, mimetype = annual_csv(table), 'text/csv'  # werkzeug が text/* に charset=utf-8 を付ける
+    else:
+        body, mimetype = annual_xlsx(table), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+    logger.info('annual table exported: year=%d format=%s bytes=%d', year, fmt, len(body))
+    return Response(
+        body,
+        mimetype=mimetype,
+        headers={'Content-Disposition': f'attachment; filename="smart_ledger_{year:04d}.{fmt}"'},
+    )
+
+
 @bp.route('/transactions')
 def transactions() -> str:
     """明細一覧（月・カテゴリ・分類元・加盟店名で絞り込み）"""
@@ -301,7 +356,7 @@ def transactions() -> str:
         txs = transactions_in_month(txs, month)
 
     if category:
-        txs = [t for t in txs if t.category == category]
+        txs = [t for t in txs if (t.category or UNCLASSIFIED_LABEL) == category]
 
     if source:
         txs = [t for t in txs if t.classification_source == source]
@@ -310,12 +365,17 @@ def transactions() -> str:
         txs = [t for t in txs if query in t.merchant_normalized.casefold() or query in t.merchant_raw.casefold()]
 
     txs.sort(key=lambda t: (t.usage_date, t.id), reverse=True)
+    names = data.category_names()
+    # 空カテゴリの明細も絞り込めるようにする（旧データに同名カテゴリが残っていれば重複させない）
+    if UNCLASSIFIED_LABEL not in names:
+        names.append(UNCLASSIFIED_LABEL)
+
     return render_template(
         'transactions.html',
         transactions=txs,
         total=sum(t.amount for t in txs),
         months=available_months(data.transactions),
-        categories=data.category_names(),
+        categories=names,
         filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
         alloc_ids={a.transaction_id for a in data.allocations},
     )

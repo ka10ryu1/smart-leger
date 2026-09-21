@@ -1,8 +1,8 @@
-"""月次集計（usage_date 基準）
+"""月次・年間集計（usage_date 基準）
 
 - 月間総支出: transactions.amount を 1 回だけ合計
 - カテゴリ別: allocations がある明細は allocations を、無い明細は transactions.category を使う
-  → 二重計上しない
+  → 二重計上しない（年間表でも同じ規則）
 """
 
 from __future__ import annotations
@@ -34,6 +34,27 @@ class MonthlySummary:
     diff_ratio: float | None
     categories: list[CategoryTotal] = field(default_factory=list)
     transaction_count: int = 0
+
+
+@dataclass
+class AnnualRow:
+    """年間表の 1 行（カテゴリ別の月別金額）"""
+
+    category: str
+    amounts: list[int]  # 1〜12 月の順
+    total: int
+
+
+@dataclass
+class AnnualTable:
+    """1 年分のカテゴリ × 月のマトリクス（月間総支出は明細金額、カテゴリ別は内訳を使う）"""
+
+    year: int
+    months: list[str]  # 'YYYY-MM' を 1〜12 月の順
+    rows: list[AnnualRow]
+    monthly_totals: list[int]
+    monthly_counts: list[int]
+    total: int
 
 
 def shift_month(month: str, delta: int) -> str:
@@ -181,3 +202,44 @@ def monthly_trend(data: LedgerData, end_month: str, months: int = 6) -> list[tup
         result.append((m, total_spending(transactions_in_month(data.transactions, m))))
 
     return result
+
+
+def available_years(transactions: list[Transaction]) -> list[int]:
+    """明細が存在する年を新しい順に返す
+
+    Args:
+        transactions: 明細
+    """
+    return sorted({t.usage_date.year for t in transactions}, reverse=True)
+
+
+def annual_table(data: LedgerData, year: int) -> AnnualTable:
+    """カテゴリ × 月の年間表を作る（その年に明細か内訳があるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
+
+    Args:
+        data: 全データ
+        year: 対象の年
+    """
+    months = [f'{year:04d}-{m:02d}' for m in range(1, 13)]
+    in_year = [t for t in data.transactions if t.usage_date.year == year]  # 月ごとの走査を対象年だけに絞る
+    amounts: dict[str, list[int]] = {}
+    monthly_totals: list[int] = []
+    monthly_counts: list[int] = []
+    for idx, month in enumerate(months):
+        txs = transactions_in_month(in_year, month)
+        monthly_totals.append(total_spending(txs))
+        monthly_counts.append(len(txs))
+        for _, category, amount in category_rows(txs, data.allocations):
+            amounts.setdefault(category, [0] * len(months))[idx] += amount
+
+    order = {c: i for i, c in enumerate(data.category_names())}
+    rows = [AnnualRow(category=cat, amounts=vals, total=sum(vals)) for cat, vals in amounts.items()]
+    rows.sort(key=lambda r: (order.get(r.category, len(order)), r.category))
+    return AnnualTable(
+        year=year,
+        months=months,
+        rows=rows,
+        monthly_totals=monthly_totals,
+        monthly_counts=monthly_counts,
+        total=sum(monthly_totals),
+    )

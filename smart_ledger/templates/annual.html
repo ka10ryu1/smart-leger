@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}{{ table.year }}年 年間表{% endblock %}
+{% block content %}
+<div class="month-nav">
+  <a class="btn" href="{{ url_for('ledger.annual', year=table.year - 1) }}">← 前年</a>
+  <form method="get" class="month-select">
+    <select name="year" onchange="this.form.submit()">
+      {% if table.year not in years %}<option value="{{ table.year }}" selected>{{ table.year }}年</option>{% endif %}
+      {% for y in years %}<option value="{{ y }}" {{ 'selected' if y == table.year }}>{{ y }}年</option>{% endfor %}
+    </select>
+  </form>
+  <a class="btn" href="{{ url_for('ledger.annual', year=table.year + 1) }}">翌年 →</a>
+</div>
+
+{% if not has_data %}
+  <section class="card center">
+    <h2>まだ明細がありません</h2>
+    <p>クレジットカード会社からダウンロードした CSV を取り込むと、ここに年間表が表示されます。</p>
+    <a class="btn btn-primary" href="{{ url_for('ledger.import_page') }}">CSV を取り込む</a>
+  </section>
+{% endif %}
+
+{% set active_months = table.monthly_counts|select|list|length %}
+<section class="stats stats-2">
+  <div class="stat card">
+    <div class="stat-label">{{ table.year }}年の総支出</div>
+    <div class="stat-value">{{ table.total|yen }}<small> 円</small></div>
+    <div class="stat-sub">{{ table.monthly_counts|sum }} 件</div>
+  </div>
+  <div class="stat card">
+    <div class="stat-label">月平均</div>
+    {% if active_months %}
+      <div class="stat-value">{{ (table.total // active_months)|yen }}<small> 円</small></div>
+      <div class="stat-sub">明細のある {{ active_months }} か月で割った値</div>
+    {% else %}
+      <div class="stat-value muted">-</div>
+      <div class="stat-sub">この年の明細はありません</div>
+    {% endif %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <h2>カテゴリ × 月 <span class="count">単位: 円</span></h2>
+    <div class="export-links">
+      <a class="btn btn-sm" href="{{ url_for('ledger.annual_export', fmt='csv', year=table.year) }}">CSV</a>
+      <a class="btn btn-sm" href="{{ url_for('ledger.annual_export', fmt='xlsx', year=table.year) }}">Excel</a>
+    </div>
+  </div>
+  {% if table.rows %}
+  <p class="hint scroll-hint">表は横にスクロールできます。</p>
+  <div class="annual-wrap">
+  <table class="annual-table">
+    <thead>
+      <tr>
+        <th>カテゴリ</th>
+        {% for m in table.months %}<th><a href="{{ url_for('ledger.dashboard', month=m) }}">{{ loop.index }}月</a></th>{% endfor %}
+        <th class="total">年間合計</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in table.rows %}
+      <tr>
+        <th>{{ r.category }}</th>
+        {% for a in r.amounts %}
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        {% endfor %}
+        <td class="total">{{ r.total|yen }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <th>月間総支出</th>
+        {% for t in table.monthly_totals %}
+        <td>{% if t %}<a href="{{ url_for('ledger.dashboard', month=table.months[loop.index0]) }}">{{ t|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        {% endfor %}
+        <td class="total">{{ table.total|yen }}</td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>
+  <p class="hint">カテゴリの金額を押すと該当月・カテゴリの明細一覧、月間総支出を押すとその月のダッシュボードを開きます。
+    内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、月間総支出には 1 回だけ計上しています(明細一覧は明細自身のカテゴリで絞り込むため、内訳で分けた金額や未分類の欄は一覧と一致しないことがあります)。</p>
+  {% else %}
+  <p class="empty">{{ table.year }}年の明細はありません。</p>
+  {% endif %}
+</section>
+{% endblock %}

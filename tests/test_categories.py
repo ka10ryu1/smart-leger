@@ -60,6 +60,34 @@ def test_add_category_rejects_empty_and_duplicate(data: LedgerData) -> None:
         add_category(data, '娯楽(サブスク)')  # シート上の未正規化名と正規化後に一致
 
 
+def test_category_name_rejects_formula_prefix(data: LedgerData) -> None:
+    """= + - @ で始まる名前と予約語「未分類」は追加も名称変更も CategoryError
+
+    Args:
+        data: テスト用データ
+    """
+    for name in ('=SUM(1)', '＝SUM(1)', '+1', '-1', '@x'):  # 全角 ＝ も正規化後に弾く
+        with pytest.raises(CategoryError):
+            add_category(data, name)
+
+    with pytest.raises(CategoryError):
+        edit_category(data, '食費', '=SUM(1)', '')
+
+    assert data.category_names()[0] == '食費'  # 検証に落ちたので元のまま
+
+    with pytest.raises(CategoryError, match='予約語'):
+        add_category(data, '未分類')  # 空カテゴリの絞り込みに使う予約語
+
+    with pytest.raises(CategoryError, match='予約語'):
+        edit_category(data, '食費', '未分類', '')
+
+    data.categories.append(Category('=旧名', 11))  # 旧規則で登録済みの名前は説明だけ更新でき、改名先だけ検証される
+    assert edit_category(data, '=旧名', '=旧名', '説明だけ') == 0
+    assert data.category_criteria()['=旧名'] == '説明だけ'
+    with pytest.raises(CategoryError):
+        edit_category(data, '=旧名', '=新名', '')
+
+
 def test_edit_category_renames_and_propagates(data: LedgerData) -> None:
     """名称変更は明細・ルール・内訳にも伝播し、説明も更新される
 
