@@ -6,6 +6,7 @@ import csv
 import io
 from datetime import date
 
+import pytest
 from openpyxl import load_workbook
 
 from smart_ledger.models import Category, LedgerData, Transaction
@@ -13,14 +14,14 @@ from smart_ledger.services.aggregation import annual_table
 from smart_ledger.services.export import annual_csv, annual_table_rows, annual_xlsx
 
 
-def sample_ledger() -> LedgerData:
-    """2 か月分の明細と '=' 始まりのカテゴリを含む LedgerData"""
+def sample_ledger(formula_category: str = '=SUM') -> LedgerData:
+    """2 か月分の明細と数式記号始まりのカテゴリを含む LedgerData"""
     return LedgerData(
         transactions=[
             Transaction('a', date(2026, 1, 5), 'A', 'A', 1000, '食費'),
-            Transaction('b', date(2026, 2, 5), 'B', 'B', 2500, '=SUM'),
+            Transaction('b', date(2026, 2, 5), 'B', 'B', 2500, formula_category),
         ],
-        categories=[Category('食費', 1), Category('=SUM', 2)],
+        categories=[Category('食費', 1), Category(formula_category, 2)],
     )
 
 
@@ -42,10 +43,16 @@ def test_annual_csv_has_bom_and_values() -> None:
     assert parsed[-1] == ['月間総支出', '1000', '2500', *(['0'] * 10), '3500']
 
 
-def test_annual_csv_neutralizes_formula_like_category() -> None:
-    """'=' 始まりのカテゴリ名（旧バージョンで登録できたもの）は CSV でも数式にならない"""
-    parsed = list(csv.reader(io.StringIO(annual_csv(annual_table(sample_ledger(), 2026)).decode('utf-8-sig'))))
-    assert parsed[2][0] == "'=SUM"  # ' を付けて打ち消す
+@pytest.mark.parametrize('prefix', ['=', '+', '-', '@'])
+def test_annual_csv_neutralizes_formula_like_category(prefix: str) -> None:
+    """数式記号始まりの旧カテゴリ名は CSV でも数式にならない
+
+    Args:
+        prefix: Excel が数式として解釈しうる先頭文字
+    """
+    category = f'{prefix}SUM'
+    parsed = list(csv.reader(io.StringIO(annual_csv(annual_table(sample_ledger(category), 2026)).decode('utf-8-sig'))))
+    assert parsed[2][0] == f"'{category}"  # ' を付けて打ち消す
     assert parsed[1][0] == '食費' and parsed[0][0] == 'カテゴリ'  # 通常の見出し・カテゴリ名は変えない
 
 
@@ -60,3 +67,35 @@ def test_annual_xlsx_is_readable_and_keeps_formula_like_text() -> None:
     assert values[2][0] == '=SUM' and ws.cell(row=3, column=1).data_type == 's'
     assert values[-1][-1] == 3500
     assert ws.cell(row=2, column=2).number_format == '#,##0'
+
+
+def test_annual_exports_for_empty_year() -> None:
+    """明細が無い年も見出しと月間総支出を持つ CSV / Excel を生成する"""
+    table = annual_table(LedgerData(), 2027)
+    parsed = list(csv.reader(io.StringIO(annual_csv(table).decode('utf-8-sig'))))
+    assert parsed == [
+        ['カテゴリ', *(f'{m}月' for m in range(1, 13)), '年間合計'],
+        ['月間総支出', *(['0'] * 13)],
+    ]
+
+    ws = load_workbook(io.BytesIO(annual_xlsx(table))).active
+    values = [list(row) for row in ws.iter_rows(values_only=True)]
+    assert values == [
+        ['カテゴリ', *(f'{m}月' for m in range(1, 13)), '年間合計'],
+        ['月間総支出', *([0] * 13)],
+    ]
+
+
+def test_annual_exports_keep_refund_as_negative() -> None:
+    """返金は年間合計・CSV・Excelで負数のまま出力する"""
+    data = LedgerData(
+        transactions=[Transaction('refund', date(2026, 3, 5), '返金', '返金', -500, '食費')],
+        categories=[Category('食費', 1)],
+    )
+    table = annual_table(data, 2026)
+    parsed = list(csv.reader(io.StringIO(annual_csv(table).decode('utf-8-sig'))))
+    ws = load_workbook(io.BytesIO(annual_xlsx(table))).active
+
+    assert table.monthly_totals[2] == table.total == -500
+    assert parsed[1][3] == '-500' and parsed[-1][-1] == '-500'
+    assert ws.cell(row=2, column=4).value == -500 and ws.cell(row=3, column=14).value == -500
