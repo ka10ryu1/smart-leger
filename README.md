@@ -6,7 +6,7 @@
 個人用 Web アプリです。
 
 - Windows 上で直接動作(WSL / Docker / SQL / クラウド DB 不要)
-- Python 3.12+ / Flask / openpyxl / httpx
+- Python 3.12+ / Flask / openpyxl / httpx（環境構築・依存管理は uv）
 - スマートフォン幅でも見やすいレスポンシブ UI
 - Dropbox デスクトップアプリの同期フォルダへ自動コピー(閲覧・バックアップ用)
 
@@ -47,8 +47,14 @@ Jev は「未知の加盟店に初期カテゴリを付ける交換可能な分�
 ### 前提
 
 - Windows 10 / 11
-- [Python 3.12 以上](https://www.python.org/downloads/windows/)(インストール時に **Add python.exe to PATH** にチェック)
 - PowerShell(Windows 標準の Windows PowerShell 5.1 または PowerShell 7)
+- [uv 0.12.17 以上](https://docs.astral.sh/uv/getting-started/installation/)(Python 3.12 は uv が自動で用意します)
+
+uv が未導入の場合は、PowerShell で次を実行してから PowerShell を開き直してください。
+
+```powershell
+winget install --id=astral-sh.uv -e
+```
 
 ### 1. リポジトリを取得
 
@@ -67,9 +73,9 @@ cd smart-ledger
 
 `setup.cmd` は内部の PowerShell スクリプトを呼び出し、次を行います。利用者が `.ps1` を直接選ぶ必要はありません。
 
-1. Python 3.12+ を検出(`py -3.12` → `py -3.13` → `py -3` → `python` → `python3` の順)
-2. 仮想環境 `.venv` を作成
-3. `pip install -r requirements.txt`
+1. uv を検出
+2. Python 3.12 と仮想環境 `.venv` を用意
+3. `uv.lock` に従って依存パッケージを同期
 4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
 5. `.env` が無ければ `.env.example` からコピー
 
@@ -80,8 +86,8 @@ cd smart-ledger
 - **「ポート 5000 は使用中ですが Smart Ledger の応答を確認できませんでした」と出る**: 別のプログラムが同じポートを使っているか、応答しなくなった Smart Ledger のウィンドウが残っています。該当ウィンドウを閉じるか、`.env` の `SMART_LEDGER_PORT` を別の番号に変えてください。「ポート 5000 を使用できません(予約済み、または権限がありません)」の場合は OS がそのポートを予約しているので、ポート番号を変えてください
 - **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
 - **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行してから `setup.cmd` を再実行してください。`git clone` したファイルには付きません
-- **Python 3.12 以上が見つかりません**: `setup.cmd` は内部で `py` ランチャー → `python` → レジストリの順に探し、試した候補をログに出します。Microsoft Store 版 Python でも動作します。python.org 版をインストールする場合は「Add python.exe to PATH」にチェックしてください
-- **pip install に失敗**: ネットワーク・プロキシ設定を確認してください。会社ネットワークでは `pip config set global.proxy http://...` が必要な場合があります
+- **uv が見つかりません**: `winget install --id=astral-sh.uv -e` を実行し、PowerShell を開き直してから `setup.cmd` を再実行してください
+- **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら `winget upgrade --id=astral-sh.uv -e` で更新してください。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
 
 ### 3. .env を設定
 
@@ -126,7 +132,7 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 .\start.cmd
 ```
 
-- `.venv` の Python で Flask を起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます
+- セットアップ済み `.venv` の Python で Flask を直接起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます（通常起動では `uv run` の同期確認を挟みません）
 - 終了は PowerShell で `Ctrl+C`
 
 手動で起動する場合:
@@ -264,7 +270,8 @@ Dropbox/SmartLedger/
 ```
 smart-ledger/
 ├─ app.py                     # 起動スクリプト(--open-browser でブラウザを開く)
-├─ requirements.txt
+├─ pyproject.toml / uv.lock   # 依存関係の定義と再現可能なロック
+├─ .python-version            # uv が使用する Python バージョン
 ├─ setup.cmd / start.cmd      # Windows で利用者が実行するセットアップ・起動ランチャー
 ├─ scripts/windows/           # ランチャーから呼び出す内部 PowerShell 実装
 ├─ .env.example               # 設定テンプレート(.env は Git 管理外)
@@ -297,7 +304,7 @@ smart-ledger/
 ## テスト方法
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q
+uv run --locked pytest -q
 ```
 
 通常のテストは Jev API を実際には呼ばず、`httpx.MockTransport` でモックしています。主なテスト項目:
@@ -326,10 +333,10 @@ smart-ledger/
 
 ```powershell
 # ライブテストだけ実行
-.\.venv\Scripts\python.exe -m pytest -m live -rs
+uv run --locked pytest -m live -rs
 
 # ライブテストを除外して実行(既定値と同じ)
-.\.venv\Scripts\python.exe -m pytest -m "not live"
+uv run --locked pytest -m "not live"
 ```
 
 ## 開発ルール（CLAUDE.md）
@@ -338,12 +345,14 @@ smart-ledger/
 
 ```powershell
 # 未使用 import などの確認と整形（シングルクォート、行長 120）
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format .
+uv run --locked ruff check .
+uv run --locked ruff format .
 
 # ブロック終了後（インデントが戻る箇所）の空行を機械的に挿入
-.\.venv\Scripts\python.exe tools\insert_block_blank_lines.py smart_ledger tests tools app.py
+uv run --locked python tools\insert_block_blank_lines.py smart_ledger tests tools app.py
 ```
+
+依存パッケージを変更するときは、実行時依存なら `uv add <package>`、開発用なら `uv add --dev <package>` を使い、`pyproject.toml` と `uv.lock` を一緒に更新します。
 
 - モジュール横断の定数は `smart_ledger/constants.py` に集約し、1 モジュール内で完結する値は関数の既定引数にしています
 - ログメッセージは英語小文字の `label: key=value` 形式です（UI 表示や例外メッセージは日本語）

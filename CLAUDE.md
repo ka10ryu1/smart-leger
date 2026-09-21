@@ -6,15 +6,15 @@ Python 3.12 / Flask / openpyxl / httpx。Windows 直接実行を前提とし、S
 ## コマンド
 
 ```powershell
-# Windows
-.\.venv\Scripts\python.exe -m ruff check .
-.\.venv\Scripts\python.exe -m ruff format .
-.\.venv\Scripts\python.exe tools\insert_block_blank_lines.py smart_ledger tests tools app.py
-.\.venv\Scripts\python.exe -m pytest -q            # 通常テスト（実 Jev API は既定で除外）
-.\.venv\Scripts\python.exe -m pytest -q -m live    # ライブテストを明示実行
+# Windows / Linux / WSL
+uv run --locked ruff check .
+uv run --locked ruff format .
+uv run --locked python tools/insert_block_blank_lines.py smart_ledger tests tools app.py
+uv run --locked pytest -q            # 通常テスト（実 Jev API は既定で除外）
+uv run --locked pytest -q -m live    # ライブテストを明示実行
 ```
 
-Linux / WSL では `.venv/bin/python` に読み替える。設定は `ruff.toml`（シングルクォート、行長 120）と `pytest.ini`（`live` マーカー）にある。
+依存関係は `pyproject.toml` と `uv.lock` で管理し、追加時は実行時依存に `uv add`、開発用依存に `uv add --dev` を使う。設定は `ruff.toml`（シングルクォート、行長 120）と `pytest.ini`（`live` マーカー）にある。
 
 ## コードスタイル
 
