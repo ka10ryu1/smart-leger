@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY
+from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY, UNCLASSIFIED_LABEL
 from ..models import Category, LedgerData
 from .normalize import normalize_merchant
 
@@ -51,7 +51,7 @@ def category_usage(data: LedgerData) -> dict[str, Counter[str]]:
 
 
 def validate_category_name(name: str, formula_prefixes: str = '=+-@') -> str:
-    """カテゴリ名を正規化して検証する（空文字と、CSV / Excel で数式として解釈される先頭文字は CategoryError）
+    """カテゴリ名を正規化して検証する（空文字・数式として解釈される先頭文字・予約語「未分類」は CategoryError）
 
     Args:
         name: 入力されたカテゴリ名
@@ -67,11 +67,14 @@ def validate_category_name(name: str, formula_prefixes: str = '=+-@') -> str:
     if name[0] in formula_prefixes:
         raise CategoryError(f'カテゴリ名の先頭に {formula_prefixes} の文字は使えません（数式として扱われます）。')
 
+    if name == UNCLASSIFIED_LABEL:
+        raise CategoryError(f'「{UNCLASSIFIED_LABEL}」はカテゴリが空の明細を指す予約語のため使えません。')
+
     return name
 
 
 def add_category(data: LedgerData, name: str, description: str = '') -> Category:
-    """カテゴリを末尾に追加する（空文字・数式になる先頭文字・重複は CategoryError）
+    """カテゴリを末尾に追加する（空文字・数式になる先頭文字・予約語・重複は CategoryError）
 
     Args:
         data: 対象の LedgerData

@@ -42,6 +42,13 @@ def test_annual_csv_has_bom_and_values() -> None:
     assert parsed[-1] == ['月間総支出', '1000', '2500', *(['0'] * 10), '3500']
 
 
+def test_annual_csv_neutralizes_formula_like_category() -> None:
+    """'=' 始まりのカテゴリ名（旧バージョンで登録できたもの）は CSV でも数式にならない"""
+    parsed = list(csv.reader(io.StringIO(annual_csv(annual_table(sample_ledger(), 2026)).decode('utf-8-sig'))))
+    assert parsed[2][0] == "'=SUM"  # ' を付けて打ち消す
+    assert parsed[1][0] == '食費' and parsed[0][0] == 'カテゴリ'  # 通常の見出し・カテゴリ名は変えない
+
+
 def test_annual_xlsx_is_readable_and_keeps_formula_like_text() -> None:
     """Excel は openpyxl で開け、'=' 始まりのカテゴリ名が数式にならない"""
     body = annual_xlsx(annual_table(sample_ledger(), 2026))

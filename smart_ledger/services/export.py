@@ -26,14 +26,21 @@ def annual_table_rows(table: AnnualTable) -> list[list[str | int]]:
     ]
 
 
-def annual_csv(table: AnnualTable) -> bytes:
+def annual_csv(table: AnnualTable, formula_prefixes: str = '=+-@') -> bytes:
     """年間表を BOM 付き UTF-8 の CSV にする（Windows の Excel で開いても文字化けしない）
+
+    先頭が数式記号のカテゴリ名（旧バージョンで登録できたもの）には ' を付け、Excel で数式として評価させない
 
     Args:
         table: 年間表
+        formula_prefixes: この文字で始まるセルを ' で打ち消す
     """
+    rows = [
+        [f"'{c}" if isinstance(c, str) and c[:1] in formula_prefixes and c else c for c in row]
+        for row in annual_table_rows(table)
+    ]
     buf = io.StringIO()
-    csv.writer(buf).writerows(annual_table_rows(table))
+    csv.writer(buf).writerows(rows)
     return buf.getvalue().encode('utf-8-sig')
 
 

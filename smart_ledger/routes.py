@@ -365,12 +365,18 @@ def transactions() -> str:
         txs = [t for t in txs if query in t.merchant_normalized.casefold() or query in t.merchant_raw.casefold()]
 
     txs.sort(key=lambda t: (t.usage_date, t.id), reverse=True)
+    names = data.category_names()
+    if (
+        UNCLASSIFIED_LABEL not in names
+    ):  # 空カテゴリの明細も絞り込めるようにする（旧データの同名カテゴリとは重複させない）
+        names.append(UNCLASSIFIED_LABEL)
+
     return render_template(
         'transactions.html',
         transactions=txs,
         total=sum(t.amount for t in txs),
         months=available_months(data.transactions),
-        categories=[*data.category_names(), UNCLASSIFIED_LABEL],  # 空カテゴリの明細も絞り込めるようにする
+        categories=names,
         filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
         alloc_ids={a.transaction_id for a in data.allocations},
     )
