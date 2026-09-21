@@ -49,8 +49,15 @@ try {
             $ErrorActionPreference = "Stop"
             if ($wingetExit -ne 0) { Fail "uv のインストールに失敗しました(終了コード $wingetExit)" }
 
-            # winget が PATH を更新しても、既存の PowerShell プロセスには反映されないことがある
-            $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+            # winget が登録した PATH だけを追加し、起動元のシェルで設定された PATH は保持する
+            $registeredPath = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+            $activePathEntries = @($env:Path -split ";")
+            foreach ($entry in ($registeredPath -split ";")) {
+                if ($entry -and $entry -notin $activePathEntries) {
+                    $env:Path += ";$entry"
+                    $activePathEntries += $entry
+                }
+            }
             $uv = Get-Command "uv" -ErrorAction SilentlyContinue
             if (-not $uv) { Fail "uv をインストールしましたが、コマンドを検出できません。PowerShell を開き直して setup.cmd を再実行してください" }
         } else {
