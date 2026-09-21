@@ -184,7 +184,7 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 
 .rule-pattern-input { flex: 1 1 200px; min-width: 0; font-size: 0.85rem; }
 
-/* 年間表: 12 か月 × カテゴリ。狭い画面では横スクロールし、カテゴリ列を固定する */
+/* 年間表: 12 か月 × カテゴリ。表が収まらないときは横スクロールし、カテゴリ列を固定する（スクロールのヒントは狭い画面だけ表示） */
 .stats-2 { grid-template-columns: repeat(2, 1fr); }
 .export-links { display: flex; gap: 0.4rem; }
 .annual-wrap { overflow-x: auto; }

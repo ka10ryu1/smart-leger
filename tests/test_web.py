@@ -201,6 +201,8 @@ def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
     assert client.get('/?month=abcdefg').status_code == 200
     assert client.get('/transactions?month=2026-13').status_code == 200
     assert client.get('/annual?year=20xx').status_code == 200
+    assert client.get('/annual?year=²²²²').status_code == 200  # isdigit は真だが int() できない
+    assert '2026年の総支出' in client.get('/annual?year=２０２６').get_data(as_text=True)  # 全角数字は 2026 として読む
 
 
 def test_rule_add_rejects_unknown_category(client: FlaskClient) -> None:

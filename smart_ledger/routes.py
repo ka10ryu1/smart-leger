@@ -230,7 +230,7 @@ def current_year(data: LedgerData) -> int:
         data: 全データ
     """
     year = request.args.get('year', '').strip()
-    if len(year) == 4 and year.isdigit():
+    if len(year) == 4 and year.isdecimal():  # isdigit は int() で変換できない上付き数字（²）も真にする
         return int(year)
 
     years = available_years(data.transactions)

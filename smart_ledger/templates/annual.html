@@ -48,7 +48,7 @@
     </div>
   </div>
   {% if table.rows %}
-  <p class="hint scroll-hint">表は横にスクロールできます。金額を押すと該当月・カテゴリの明細一覧を開きます。</p>
+  <p class="hint scroll-hint">表は横にスクロールできます。</p>
   <div class="annual-wrap">
   <table class="annual-table">
     <thead>
@@ -80,7 +80,8 @@
     </tfoot>
   </table>
   </div>
-  <p class="hint">内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、月間総支出には 1 回だけ計上しています。</p>
+  <p class="hint">カテゴリの金額を押すと該当月・カテゴリの明細一覧、月間総支出を押すとその月のダッシュボードを開きます。
+    内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、月間総支出には 1 回だけ計上しています(明細一覧は明細自身のカテゴリで絞り込むため、内訳で分けた金額や未分類の欄は一覧と一致しないことがあります)。</p>
   {% else %}
   <p class="empty">{{ table.year }}年の明細はありません。</p>
   {% endif %}

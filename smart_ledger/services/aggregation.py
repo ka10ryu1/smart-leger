@@ -214,7 +214,7 @@ def available_years(transactions: list[Transaction]) -> list[int]:
 
 
 def annual_table(data: LedgerData, year: int) -> AnnualTable:
-    """カテゴリ × 月の年間表を作る（金額のあるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
+    """カテゴリ × 月の年間表を作る（その年に明細か内訳があるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
 
     Args:
         data: 全データ
