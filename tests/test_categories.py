@@ -60,6 +60,22 @@ def test_add_category_rejects_empty_and_duplicate(data: LedgerData) -> None:
         add_category(data, '娯楽(サブスク)')  # シート上の未正規化名と正規化後に一致
 
 
+def test_category_name_rejects_formula_prefix(data: LedgerData) -> None:
+    """= + - @ で始まるカテゴリ名は追加も名称変更も CategoryError（エクスポートで数式にならないようにする）
+
+    Args:
+        data: テスト用データ
+    """
+    for name in ('=SUM(1)', '＝SUM(1)', '+1', '-1', '@x'):  # 全角 ＝ も正規化後に弾く
+        with pytest.raises(CategoryError):
+            add_category(data, name)
+
+    with pytest.raises(CategoryError):
+        edit_category(data, '食費', '=SUM(1)', '')
+
+    assert data.category_names()[0] == '食費'  # 検証に落ちたので元のまま
+
+
 def test_edit_category_renames_and_propagates(data: LedgerData) -> None:
     """名称変更は明細・ルール・内訳にも伝播し、説明も更新される
 

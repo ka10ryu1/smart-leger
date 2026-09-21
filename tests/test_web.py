@@ -202,6 +202,7 @@ def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
     assert client.get('/transactions?month=2026-13').status_code == 200
     assert client.get('/annual?year=20xx').status_code == 200
     assert client.get('/annual?year=²²²²').status_code == 200  # isdigit は真だが int() できない
+    assert '0年の総支出' not in client.get('/annual?year=0000').get_data(as_text=True)  # 前年リンクが負の年になる
     assert '2026年の総支出' in client.get('/annual?year=２０２６').get_data(as_text=True)  # 全角数字は 2026 として読む
 
 
@@ -472,16 +473,23 @@ def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -
         fixture_csv_bytes: CP932 の fixture
     """
     import_csv(client, fixture_csv_bytes)
+
+    def add_unclassified(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_none', date(2026, 7, 2), 'N', 'N', 300, ''))
+
+    client.application.extensions['smart_ledger'].repo.update(add_unclassified)
     html = client.get('/annual').get_data(as_text=True)
     assert '2026年の総支出' in html
     assert '45,590' in html  # 8 月の月間総支出（test_web_flow と同じ値）
     assert 'href="/transactions?month=2026-08&amp;category=' in html
     assert 'href="/annual?year=2025"' in html and 'href="/annual?year=2027"' in html
     assert '2027年の明細はありません' in client.get('/annual?year=2027').get_data(as_text=True)
+    unclassified = client.get('/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E').get_data(as_text=True)
+    assert 'tx_none' in unclassified  # 未分類セルのリンク先に category が空の明細が出る
 
     csv_response = client.get('/annual/export.csv?year=2026')
     assert csv_response.status_code == 200
-    assert csv_response.mimetype == 'text/csv'
+    assert csv_response.headers['Content-Type'] == 'text/csv; charset=utf-8'
     assert csv_response.headers['Content-Disposition'] == 'attachment; filename="smart_ledger_2026.csv"'
     text = csv_response.get_data().decode('utf-8-sig')
     assert text.startswith('カテゴリ,1月,') and '月間総支出,' in text and ',45590,' in text

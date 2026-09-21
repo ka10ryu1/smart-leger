@@ -90,3 +90,4 @@ EXCEL_COLUMN_WIDTHS: dict[str, int] = {
 LOG_CARD_NUMBER_PATTERN = re.compile(r'(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)')  # 13〜19 桁（区切りは空白か -）
 LOG_BEARER_PATTERN = re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.]+', re.IGNORECASE)
 MONTH_PATTERN = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+YEAR_PATTERN = re.compile(r'^\d{4}$')  # \d は isdecimal と同じ Unicode Nd なので全角数字も通る（int() できる）

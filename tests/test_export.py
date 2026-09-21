@@ -15,14 +15,13 @@ from smart_ledger.services.export import annual_csv, annual_table_rows, annual_x
 
 def sample_ledger() -> LedgerData:
     """2 か月分の明細と '=' 始まりのカテゴリを含む LedgerData"""
-    data = LedgerData(
+    return LedgerData(
         transactions=[
             Transaction('a', date(2026, 1, 5), 'A', 'A', 1000, '食費'),
             Transaction('b', date(2026, 2, 5), 'B', 'B', 2500, '=SUM'),
-        ]
+        ],
+        categories=[Category('食費', 1), Category('=SUM', 2)],
     )
-    data.categories = [Category('食費', 1), Category('=SUM', 2)]
-    return data
 
 
 def test_annual_table_rows_layout() -> None:
@@ -37,7 +36,7 @@ def test_annual_table_rows_layout() -> None:
 def test_annual_csv_has_bom_and_values() -> None:
     """CSV は BOM 付き UTF-8 で、Excel 向けに読み戻せる"""
     body = annual_csv(annual_table(sample_ledger(), 2026))
-    assert body.startswith('﻿'.encode('utf-8'))
+    assert body.startswith(b'\xef\xbb\xbf')  # BOM（不可視文字を直書きしない）
     parsed = list(csv.reader(io.StringIO(body.decode('utf-8-sig'))))
     assert parsed[0][0] == 'カテゴリ' and parsed[0][-1] == '年間合計'
     assert parsed[-1] == ['月間総支出', '1000', '2500', *(['0'] * 10), '3500']

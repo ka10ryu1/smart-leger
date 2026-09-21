@@ -221,11 +221,12 @@ def annual_table(data: LedgerData, year: int) -> AnnualTable:
         year: 対象の年
     """
     months = [f'{year:04d}-{m:02d}' for m in range(1, 13)]
+    in_year = [t for t in data.transactions if t.usage_date.year == year]  # 月ごとの走査を対象年だけに絞る
     amounts: dict[str, list[int]] = {}
     monthly_totals: list[int] = []
     monthly_counts: list[int] = []
     for idx, month in enumerate(months):
-        txs = transactions_in_month(data.transactions, month)
+        txs = transactions_in_month(in_year, month)
         monthly_totals.append(total_spending(txs))
         monthly_counts.append(len(txs))
         for _, category, amount in category_rows(txs, data.allocations):

@@ -30,7 +30,7 @@
   <div class="stat card">
     <div class="stat-label">月平均</div>
     {% if active_months %}
-      <div class="stat-value">{{ (table.total / active_months)|round|int|yen }}<small> 円</small></div>
+      <div class="stat-value">{{ (table.total // active_months)|yen }}<small> 円</small></div>
       <div class="stat-sub">明細のある {{ active_months }} か月で割った値</div>
     {% else %}
       <div class="stat-value muted">-</div>
@@ -54,8 +54,8 @@
     <thead>
       <tr>
         <th>カテゴリ</th>
-        {% for m in table.months %}<th class="num"><a href="{{ url_for('ledger.dashboard', month=m) }}">{{ m[5:]|int }}月</a></th>{% endfor %}
-        <th class="num total">年間合計</th>
+        {% for m in table.months %}<th><a href="{{ url_for('ledger.dashboard', month=m) }}">{{ loop.index }}月</a></th>{% endfor %}
+        <th class="total">年間合計</th>
       </tr>
     </thead>
     <tbody>
@@ -63,9 +63,9 @@
       <tr>
         <th>{{ r.category }}</th>
         {% for a in r.amounts %}
-        <td class="num">{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
         {% endfor %}
-        <td class="num total">{{ r.total|yen }}</td>
+        <td class="total">{{ r.total|yen }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -73,9 +73,9 @@
       <tr>
         <th>月間総支出</th>
         {% for t in table.monthly_totals %}
-        <td class="num">{% if t %}<a href="{{ url_for('ledger.dashboard', month=table.months[loop.index0]) }}">{{ t|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{% if t %}<a href="{{ url_for('ledger.dashboard', month=table.months[loop.index0]) }}">{{ t|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
         {% endfor %}
-        <td class="num total">{{ table.total|yen }}</td>
+        <td class="total">{{ table.total|yen }}</td>
       </tr>
     </tfoot>
   </table>

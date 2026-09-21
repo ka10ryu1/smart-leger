@@ -30,6 +30,7 @@ from .constants import (
     SOURCE_MANUAL,
     SOURCE_RULE,
     UNCLASSIFIED_LABEL,
+    YEAR_PATTERN,
 )
 from .models import ImportRecord, LedgerData, Transaction, now_iso
 from .services.aggregation import (
@@ -224,14 +225,15 @@ def current_month(data: LedgerData) -> str:
 
 
 def current_year(data: LedgerData) -> int:
-    """クエリの year（4 桁の数字）を返す（無効なら最新の明細がある年、それも無ければ今年）
+    """クエリの year（4 桁の数字。0000 は無効）を返す（無効なら最新の明細がある年、それも無ければ今年）
 
     Args:
         data: 全データ
     """
-    year = request.args.get('year', '').strip()
-    if len(year) == 4 and year.isdecimal():  # isdigit は int() で変換できない上付き数字（²）も真にする
-        return int(year)
+    text = request.args.get('year', '').strip()
+    year = int(text) if YEAR_PATTERN.match(text) else 0  # 0000 は 0 になり無効扱い（前年リンクが負の年になるため）
+    if year:
+        return year
 
     years = available_years(data.transactions)
     return years[0] if years else date.today().year
@@ -315,26 +317,26 @@ def annual() -> str:
     )
 
 
-@bp.route('/annual/export.<fmt>')
+@bp.route('/annual/export.<any(csv, xlsx):fmt>')
 def annual_export(fmt: str) -> Response:
     """年間表を CSV / Excel でダウンロードする（月間総支出・カテゴリ別の両方を 1 枚の表に含む）
 
     Args:
-        fmt: 'csv' または 'xlsx'（それ以外は 404）
+        fmt: 'csv' または 'xlsx'（それ以外は routing が 404 にする）
     """
-    if fmt == 'csv':
-        build, mimetype = annual_csv, 'text/csv; charset=utf-8'
-    elif fmt == 'xlsx':
-        build, mimetype = annual_xlsx, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-    else:
-        abort(404)
-
     data = load_data()
     year = current_year(data)
-    body = build(annual_table(data, year))
+    table = annual_table(data, year)
+    if fmt == 'csv':
+        body, mimetype = annual_csv(table), 'text/csv'  # werkzeug が text/* に charset=utf-8 を付ける
+    else:
+        body, mimetype = annual_xlsx(table), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
     logger.info('annual table exported: year=%d format=%s bytes=%d', year, fmt, len(body))
     return Response(
-        body, mimetype=mimetype, headers={'Content-Disposition': f'attachment; filename="smart_ledger_{year}.{fmt}"'}
+        body,
+        mimetype=mimetype,
+        headers={'Content-Disposition': f'attachment; filename="smart_ledger_{year:04d}.{fmt}"'},
     )
 
 
@@ -354,7 +356,7 @@ def transactions() -> str:
         txs = transactions_in_month(txs, month)
 
     if category:
-        txs = [t for t in txs if t.category == category]
+        txs = [t for t in txs if (t.category or UNCLASSIFIED_LABEL) == category]
 
     if source:
         txs = [t for t in txs if t.classification_source == source]

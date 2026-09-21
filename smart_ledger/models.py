@@ -130,7 +130,7 @@ class Transaction:
     @property
     def month(self) -> str:
         """利用日の年月（'YYYY-MM'）"""
-        return self.usage_date.strftime('%Y-%m')
+        return f'{self.usage_date.year:04d}-{self.usage_date.month:02d}'  # strftime は避ける（月次集計が全明細に対して呼ぶ）
 
     def needs_review(self, threshold: float) -> bool:
         """要確認かどうかを返す（未分類 / Jev エラー / confidence が閾値未満）
