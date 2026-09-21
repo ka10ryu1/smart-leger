@@ -121,7 +121,7 @@ class ParsedStatement:
     header_line: int
     file_hash: str
     profile: str = ''
-    skipped_lines: int = 0  # 日付や金額を読めなかった行（ヘッダー・合計行など）
+    skipped_lines: int = 0  # 日付や金額を読めなかった行（カード保有者行・合計行など）
     excluded_lines: int = 0  # 明細としては読めたが許可リストに無い行
     warnings: list[str] = field(default_factory=list)
 
@@ -388,8 +388,9 @@ def extract_meta(lines: list[list[str]], header_idx: int, card_keys: tuple[str, 
 def assign_row_keys(rows: list[ParsedRow]) -> None:
     """利用日順に並べ替えてから出現回数と row_key を付ける
 
-    並べ替えは同じ日付の中では元の行順を保つ安定ソートなので、新しい日付が先の CSV でも
-    古い日付が先の CSV でも同じ (利用日, 加盟店, 金額) の組に同じ出現回数が割り当たる
+    出現回数は同じ (利用日, 加盟店, 金額) の行どうしでしか数えず、それらの行は互いに区別できないため、
+    row_key の集合は CSV の並び順（新しい日付が先 / 古い日付が先）に依存しない。
+    並べ替えはプレビューと取込結果の表示順を利用日順に揃えるためのもの
 
     Args:
         rows: 出現回数と row_key が未設定の明細行（この場で並べ替えて書き換える）

@@ -168,16 +168,6 @@ def safe_back() -> str:
     return url_for('ledger.transactions')
 
 
-@bp.app_template_filter('kind_label')
-def kind_label(value: str) -> str:
-    """kind を表示用ラベルにする
-
-    Args:
-        value: expense / income
-    """
-    return KIND_LABELS.get(value, value)
-
-
 @bp.app_template_filter('source_label')
 def source_label(value: str) -> str:
     """classification_source を表示用ラベルにする

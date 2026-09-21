@@ -138,7 +138,7 @@ class ClassificationPipeline:
         prepared_rules: list[tuple[MerchantRule, str, str]],
         fixed_category: str = '',
     ) -> ClassificationResult:
-        """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は請求月が違っても 1 回だけ問い合わせる）
+        """ルール → 許可リストのカテゴリ → fallback の順に分類する（同一加盟店は請求月が違っても 1 回だけ問い合わせる）
 
         キャッシュした結果のカテゴリが categories に無い（確定待ちの間に名称変更・削除された）場合は捨てて再問い合わせする
 

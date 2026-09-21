@@ -239,6 +239,8 @@ class Importer:
     def commit(self, data: LedgerData, preview: ImportPreview) -> ImportResult:
         """プレビューで新規だった行だけ分類して LedgerData に追加する（保存は呼び出し側が行う）
 
+        銀行明細の許可リストで決まったカテゴリが categories シートに無ければ、あわせて追加する
+
         Args:
             data: 追加先の全データ
             preview: 確定するプレビュー
@@ -260,9 +262,8 @@ class Importer:
         counts = dict.fromkeys(('imported', 'auto', 'review', 'errors', 'rules', 'income'), 0)
         counts['dup'] = len(preview.rows) - len(rows)
         months: set[str] = set()
-        hinted_categories: list[
-            str
-        ] = []  # 許可リストのカテゴリがそのまま採用された行のカテゴリ（順序を保って重複なし）
+        # 許可リストのカテゴリがそのまま採用された行のカテゴリ（順序を保って重複なし）
+        hinted_categories: list[str] = []
         for row in rows:
             usage_date = date.fromisoformat(row.usage_date)
             result = self.pipeline.classify(

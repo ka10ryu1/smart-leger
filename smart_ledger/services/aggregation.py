@@ -74,8 +74,9 @@ class AnnualTable:
 
     @property
     def monthly_balances(self) -> list[int]:
-        """月ごとの収支（収入 − 総支出）"""
-        return [income - total for income, total in zip(self.monthly_incomes, self.monthly_totals)]
+        """月ごとの収支（収入 − 総支出）を monthly_totals と同じ長さで返す（収入が無い年は総支出の符号を反転した値）"""
+        incomes = self.monthly_incomes or [0] * len(self.monthly_totals)  # 既定の空リストで zip が全部落ちないように
+        return [income - total for income, total in zip(incomes, self.monthly_totals)]
 
     @property
     def balance(self) -> int:

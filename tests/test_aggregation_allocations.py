@@ -8,6 +8,7 @@ import pytest
 
 from smart_ledger.models import Allocation, Category, LedgerData, Transaction
 from smart_ledger.services.aggregation import (
+    AnnualTable,
     annual_table,
     available_years,
     monthly_summary,
@@ -274,3 +275,17 @@ def test_income_only_previous_month_counts_as_no_data(categories: list[str]) -> 
     summary = monthly_summary(data, '2026-09')
     assert summary.prev_total is None and summary.diff is None
     assert (summary.total, summary.transaction_count, summary.income_count) == (3000, 1, 0)
+
+
+def test_monthly_balances_length_matches_months_without_income() -> None:
+    """収入を持たない AnnualTable でも月ごとの収支は 12 か月分そろい、年間の収支と符合する"""
+    table = AnnualTable(
+        year=2026,
+        months=[f'2026-{m:02d}' for m in range(1, 13)],
+        rows=[],
+        monthly_totals=[100] * 12,
+        monthly_counts=[1] * 12,
+        total=1200,
+    )
+    assert table.monthly_balances == [-100] * 12
+    assert sum(table.monthly_balances) == table.balance == -1200
