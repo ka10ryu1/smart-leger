@@ -1,6 +1,8 @@
 """月次・年間集計（usage_date 基準）
 
-- 月間総支出: transactions.amount を 1 回だけ合計
+- 支出と収入（kind）は必ず分けて集計する。総支出に収入を混ぜない
+- 月間総支出: kind=expense の transactions.amount を 1 回だけ合計
+- 収支: 収入合計 − 総支出
 - カテゴリ別: allocations がある明細は allocations を、無い明細は transactions.category を使う
   → 二重計上しない（年間表でも同じ規則）
 """
@@ -25,7 +27,7 @@ class CategoryTotal:
 
 @dataclass
 class MonthlySummary:
-    """1 か月分の集計結果"""
+    """1 か月分の集計結果（total / categories は支出、income / income_categories は収入）"""
 
     month: str
     total: int
@@ -34,6 +36,13 @@ class MonthlySummary:
     diff_ratio: float | None
     categories: list[CategoryTotal] = field(default_factory=list)
     transaction_count: int = 0
+    income: int = 0
+    income_categories: list[CategoryTotal] = field(default_factory=list)
+
+    @property
+    def balance(self) -> int:
+        """収支（収入 − 総支出）"""
+        return self.income - self.total
 
 
 @dataclass
@@ -47,7 +56,10 @@ class AnnualRow:
 
 @dataclass
 class AnnualTable:
-    """1 年分のカテゴリ × 月のマトリクス（月間総支出は明細金額、カテゴリ別は内訳を使う）"""
+    """1 年分のカテゴリ × 月のマトリクス（月間総支出は明細金額、カテゴリ別は内訳を使う）
+
+    支出（rows / monthly_totals / total）と収入（income_rows / monthly_incomes / income_total）を分けて持つ
+    """
 
     year: int
     months: list[str]  # 'YYYY-MM' を 1〜12 月の順
@@ -55,6 +67,19 @@ class AnnualTable:
     monthly_totals: list[int]
     monthly_counts: list[int]
     total: int
+    income_rows: list[AnnualRow] = field(default_factory=list)
+    monthly_incomes: list[int] = field(default_factory=list)
+    income_total: int = 0
+
+    @property
+    def monthly_balances(self) -> list[int]:
+        """月ごとの収支（収入 − 総支出）"""
+        return [income - total for income, total in zip(self.monthly_incomes, self.monthly_totals)]
+
+    @property
+    def balance(self) -> int:
+        """年間の収支（収入 − 総支出）"""
+        return self.income_total - self.total
 
 
 def shift_month(month: str, delta: int) -> str:
@@ -89,13 +114,36 @@ def transactions_in_month(transactions: list[Transaction], month: str) -> list[T
     return [t for t in transactions if t.month == month]
 
 
-def total_spending(transactions: list[Transaction]) -> int:
-    """明細金額の合計（内訳は見ない）
+def split_by_kind(transactions: list[Transaction]) -> tuple[list[Transaction], list[Transaction]]:
+    """明細を支出と収入に分ける
 
     Args:
         transactions: 明細
+
+    Returns:
+        (支出の明細, 収入の明細)
     """
-    return int(sum(t.amount for t in transactions))
+    expenses = [t for t in transactions if not t.is_income]
+    incomes = [t for t in transactions if t.is_income]
+    return expenses, incomes
+
+
+def total_spending(transactions: list[Transaction]) -> int:
+    """支出の明細金額の合計（収入と内訳は見ない）
+
+    Args:
+        transactions: 明細（収入を含んでいてもよい）
+    """
+    return int(sum(t.amount for t in transactions if not t.is_income))
+
+
+def total_income(transactions: list[Transaction]) -> int:
+    """収入の明細金額の合計（内訳は見ない）
+
+    Args:
+        transactions: 明細（支出を含んでいてもよい）
+    """
+    return int(sum(t.amount for t in transactions if t.is_income))
 
 
 def category_rows(transactions: list[Transaction], allocations: list[Allocation]) -> list[tuple[str, str, int]]:
@@ -151,7 +199,7 @@ def category_totals(
 
 
 def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
-    """月間総支出・前月比・カテゴリ別集計をまとめる
+    """月間総支出・前月比・カテゴリ別集計・収入をまとめる（前月比は支出どうしで比べる）
 
     Args:
         data: 全データ
@@ -159,6 +207,7 @@ def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
     """
     current = transactions_in_month(data.transactions, month)
     previous = transactions_in_month(data.transactions, shift_month(month, -1))
+    expenses, incomes = split_by_kind(current)
     total = total_spending(current)
     prev_total = total_spending(previous) if previous else None
     diff: int | None = None
@@ -168,14 +217,17 @@ def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
         if prev_total:
             diff_ratio = diff / prev_total
 
+    names = data.category_names()
     return MonthlySummary(
         month=month,
         total=total,
         prev_total=prev_total,
         diff=diff,
         diff_ratio=diff_ratio,
-        categories=category_totals(current, data.allocations, data.category_names()),
+        categories=category_totals(expenses, data.allocations, names),
         transaction_count=len(current),
+        income=total_income(current),
+        income_categories=category_totals(incomes, data.allocations, names),
     )
 
 
@@ -213,8 +265,47 @@ def available_years(transactions: list[Transaction]) -> list[int]:
     return sorted({t.usage_date.year for t in transactions}, reverse=True)
 
 
+def month_matrix(
+    transactions: list[Transaction], allocations: list[Allocation], months: list[str]
+) -> tuple[dict[str, list[int]], list[int]]:
+    """カテゴリ × 月の金額表と、月ごとの明細金額合計を作る
+
+    Args:
+        transactions: 集計する明細（支出だけ・収入だけのどちらかを渡す）
+        allocations: 内訳
+        months: 'YYYY-MM' を月順に並べたもの
+
+    Returns:
+        (カテゴリ名 → 月別金額のリスト, 月別の明細金額合計)
+    """
+    amounts: dict[str, list[int]] = {}
+    totals: list[int] = []
+    for idx, month in enumerate(months):
+        txs = transactions_in_month(transactions, month)
+        totals.append(int(sum(t.amount for t in txs)))
+        for _, category, amount in category_rows(txs, allocations):
+            amounts.setdefault(category, [0] * len(months))[idx] += amount
+
+    return amounts, totals
+
+
+def annual_rows(amounts: dict[str, list[int]], category_order: list[str]) -> list[AnnualRow]:
+    """カテゴリ × 月の金額表を AnnualRow のリストにする（sort_order 順、未登録のカテゴリは末尾）
+
+    Args:
+        amounts: カテゴリ名 → 月別金額のリスト
+        category_order: 並び順に使うカテゴリ順
+    """
+    order = {c: i for i, c in enumerate(category_order)}
+    rows = [AnnualRow(category=cat, amounts=vals, total=sum(vals)) for cat, vals in amounts.items()]
+    rows.sort(key=lambda r: (order.get(r.category, len(order)), r.category))
+    return rows
+
+
 def annual_table(data: LedgerData, year: int) -> AnnualTable:
     """カテゴリ × 月の年間表を作る（その年に明細か内訳があるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
+
+    支出と収入は別の表にする（同じカテゴリ名が両方に出ることはない想定だが、混ぜて合計はしない）
 
     Args:
         data: 全データ
@@ -222,24 +313,19 @@ def annual_table(data: LedgerData, year: int) -> AnnualTable:
     """
     months = [f'{year:04d}-{m:02d}' for m in range(1, 13)]
     in_year = [t for t in data.transactions if t.usage_date.year == year]  # 月ごとの走査を対象年だけに絞る
-    amounts: dict[str, list[int]] = {}
-    monthly_totals: list[int] = []
-    monthly_counts: list[int] = []
-    for idx, month in enumerate(months):
-        txs = transactions_in_month(in_year, month)
-        monthly_totals.append(total_spending(txs))
-        monthly_counts.append(len(txs))
-        for _, category, amount in category_rows(txs, data.allocations):
-            amounts.setdefault(category, [0] * len(months))[idx] += amount
-
-    order = {c: i for i, c in enumerate(data.category_names())}
-    rows = [AnnualRow(category=cat, amounts=vals, total=sum(vals)) for cat, vals in amounts.items()]
-    rows.sort(key=lambda r: (order.get(r.category, len(order)), r.category))
+    expenses, incomes = split_by_kind(in_year)
+    monthly_counts = [len(transactions_in_month(in_year, month)) for month in months]
+    expense_amounts, monthly_totals = month_matrix(expenses, data.allocations, months)
+    income_amounts, monthly_incomes = month_matrix(incomes, data.allocations, months)
+    names = data.category_names()
     return AnnualTable(
         year=year,
         months=months,
-        rows=rows,
+        rows=annual_rows(expense_amounts, names),
         monthly_totals=monthly_totals,
         monthly_counts=monthly_counts,
         total=sum(monthly_totals),
+        income_rows=annual_rows(income_amounts, names),
+        monthly_incomes=monthly_incomes,
+        income_total=sum(monthly_incomes),
     )

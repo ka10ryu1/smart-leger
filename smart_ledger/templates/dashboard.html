@@ -16,7 +16,7 @@
 {% if not has_data %}
   <section class="card center">
     <h2>まだ明細がありません</h2>
-    <p>クレジットカード会社からダウンロードした CSV を取り込むと、ここに月次集計が表示されます。</p>
+    <p>クレジットカード会社や銀行口座からダウンロードした CSV を取り込むと、ここに月次集計が表示されます。</p>
     <a class="btn btn-primary" href="{{ url_for('ledger.import_page') }}">CSV を取り込む</a>
   </section>
 {% endif %}
@@ -37,6 +37,18 @@
       <div class="stat-sub">前月のデータなし</div>
     {% endif %}
   </div>
+  {% if summary.income %}
+  <div class="stat card">
+    <div class="stat-label">収入</div>
+    <div class="stat-value income">+{{ summary.income|yen }}<small> 円</small></div>
+    <div class="stat-sub">売電などの入金</div>
+  </div>
+  <div class="stat card">
+    <div class="stat-label">収支</div>
+    <div class="stat-value {{ 'ok' if summary.balance > 0 else 'up' if summary.balance < 0 }}">{{ '+' if summary.balance > 0 }}{{ summary.balance|yen }}<small> 円</small></div>
+    <div class="stat-sub">収入 − 総支出</div>
+  </div>
+  {% endif %}
   <a class="stat card link" href="{{ url_for('ledger.review') }}">
     <div class="stat-label">要確認</div>
     <div class="stat-value {{ 'warn' if review_count }}">{{ review_count }}<small> 件</small></div>
@@ -61,11 +73,31 @@
     </li>
     {% endfor %}
   </ul>
-  <p class="hint">内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、総支出には 1 回だけ計上しています。</p>
+  <p class="hint">内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、総支出には 1 回だけ計上しています。収入は総支出に含めず、下の「カテゴリ別収入」で集計しています。</p>
   {% else %}
-  <p class="empty">この月の明細はありません。</p>
+  <p class="empty">この月の支出明細はありません。</p>
   {% endif %}
 </section>
+
+{% if summary.income_categories %}
+<section class="card">
+  <h2>カテゴリ別収入</h2>
+  <ul class="cat-bars">
+    {% for c in summary.income_categories %}
+    <li>
+      <a href="{{ url_for('ledger.transactions', month=month, category=c.category) }}">
+        <div class="cat-row">
+          <span class="cat-name">{{ c.category }}</span>
+          <span class="cat-amount income">+{{ c.amount|yen }} 円</span>
+          <span class="cat-ratio">{{ c.ratio|pct }}</span>
+        </div>
+        <div class="bar"><div class="bar-fill income" style="width: {{ (c.ratio * 100)|round(1) }}%"></div></div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 
 <section class="card">
   <div class="card-head">

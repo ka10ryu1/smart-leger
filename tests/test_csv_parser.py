@@ -165,3 +165,59 @@ def test_parse_amount(raw: str, expected: int | None) -> None:
         expected: 期待値（読めない場合は None）
     """
     assert parse_amount(raw) == expected
+
+
+def test_bank_profile_reads_only_allowed_rows(fixture_bank_csv_bytes: bytes) -> None:
+    """銀行口座 CSV は住宅ローンと売電の行だけを取り込み、他は対象外として数える
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
+    assert (parsed.profile, parsed.card, parsed.header_line) == ('bank', '銀行口座', 1)
+    assert len(parsed.rows) == 5
+    assert parsed.excluded_lines == 4  # 地方税・利息・定額自動入金・個人宛振込
+    assert parsed.skipped_lines == 0 and parsed.warnings == []
+    assert {r.merchant_normalized for r in parsed.rows} == {'約定返済 円 住宅', '振込*トウデンPG コウニユウ'}
+
+
+def test_bank_profile_splits_withdrawal_and_deposit(fixture_bank_csv_bytes: bytes) -> None:
+    """出金は支出（住宅ローン）、入金は収入（売電収入）として読む
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
+    loans = [r for r in parsed.rows if r.category_hint == '住宅ローン']
+    solar = [r for r in parsed.rows if r.category_hint == '売電収入']
+    assert [r.amount for r in loans] == [69000, 70000, 70000]
+    assert all(r.kind == 'expense' for r in loans)
+    assert [r.amount for r in solar] == [6500, 7000]
+    assert all(r.kind == 'income' for r in solar)  # 入金は負数ではなく kind で表す
+
+
+def test_bank_rows_are_sorted_by_date_and_deduplicated(fixture_bank_csv_bytes: bytes) -> None:
+    """新しい日付が先の CSV でも利用日の昇順に並び、同日同額の 2 行は出現回数で区別される
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
+    assert [r.usage_date for r in parsed.rows] == sorted(r.usage_date for r in parsed.rows)
+    same_day = [r for r in parsed.rows if r.usage_date == date(2026, 9, 28)]
+    assert [r.occurrence for r in same_day] == [0, 1]
+    assert len({r.row_key for r in parsed.rows}) == len(parsed.rows)
+
+
+def test_card_profile_is_preferred_over_bank_profile() -> None:
+    """「日付」列を持つカード明細でも、ヘッダーに「ご利用年月日」があれば card として読む"""
+    content = '日付,メモ\r\nご利用年月日,ご利用箇所,ご利用額\r\n2026/08/01,テスト,100\r\n'.encode()
+    parsed = parse_statement_bytes(content)
+    assert parsed.profile == 'card'
+    assert [r.category_hint for r in parsed.rows] == ['']  # card は許可リストを使わない
+
+
+def test_unknown_header_reports_both_markers() -> None:
+    """どちらのプロファイルのヘッダーも無ければ、両方の目印を挙げて CsvParseError"""
+    with pytest.raises(CsvParseError, match='ご利用年月日.*日付'):
+        parse_statement_bytes('氏名,金額\r\nテスト,100\r\n'.encode())

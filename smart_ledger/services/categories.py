@@ -3,6 +3,7 @@
 - 名称変更は transactions / merchant_rules / allocations の category にも伝播させる
 - フォールバックカテゴリ（Jev 失敗時に使う「その他」）は名称変更・削除しない
 - 明細・ルール・内訳で使われているカテゴリは削除しない（先に付け替えてもらう）
+- 銀行明細の取込で必要になるカテゴリ（住宅ローン・売電収入など）は ensure_categories で補う
 """
 
 from __future__ import annotations
@@ -89,6 +90,34 @@ def add_category(data: LedgerData, name: str, description: str = '') -> Category
     category = Category(category=name, sort_order=max_order + 1, description=description.strip())
     data.categories.append(category)
     return category
+
+
+def ensure_categories(data: LedgerData, names: list[str]) -> list[str]:
+    """まだ登録されていないカテゴリを末尾に追加する（CSV の許可リストが使うカテゴリを補うために呼ぶ）
+
+    既存ファイルには後から増やしたカテゴリが無いため、取込時に足りない分だけ補って
+    編集画面のカテゴリ選択や年間表の並び順から漏れないようにする
+
+    Args:
+        data: 対象の LedgerData
+        names: 必要なカテゴリ名（重複・空文字は無視する）
+
+    Returns:
+        実際に追加したカテゴリ名（追加が無ければ空リスト）
+    """
+    added: list[str] = []
+    for name in names:
+        if not name:
+            continue
+
+        try:
+            add_category(data, name, CATEGORY_DESCRIPTIONS.get(name, ''))
+        except CategoryError:  # 既に存在する（または旧規則で登録できない名前）なら何もしない
+            continue
+
+        added.append(name)
+
+    return added
 
 
 def edit_category(data: LedgerData, name: str, new_name: str, description: str) -> int:

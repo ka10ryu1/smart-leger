@@ -1,5 +1,6 @@
 """CSV 取込のオーケストレーション（プレビュー → 確定）
 
+- カード明細 CSV と銀行口座明細 CSV のどちらも同じ流れで扱う（種別は csv_parser がヘッダーから判定する）
 - ファイル SHA-256 を imports.file_hash と照合し、同一ファイルなら取込済みと表示する（確定できるかは新規行の有無で決まる）
 - 明細単位は row_key（利用日・正規化加盟店・金額・同ファイル内の出現回数）を同じカード名の明細どうしで照合
 - プレビュー結果は staging/<token>.json に一時保存し、「取り込む」で確定
@@ -15,8 +16,9 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..constants import SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
+from ..constants import KIND_EXPENSE, KIND_INCOME, SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
 from ..models import ImportRecord, LedgerData, Transaction, new_id, now_iso
+from .categories import ensure_categories
 from .classifier import ClassificationPipeline
 from .csv_parser import parse_statement_bytes
 from .merchant_rules import prepare_rules
@@ -37,6 +39,8 @@ class PreviewRow:
     source_line: int
     duplicate: bool
     existing_category: str = ''
+    kind: str = KIND_EXPENSE
+    category_hint: str = ''  # CSV の許可リストで決まったカテゴリ（空なら分類器に任せる）
 
 
 @dataclass
@@ -49,6 +53,7 @@ class ImportPreview:
     card: str
     encoding: str
     header_line: int
+    profile: str
     already_imported: bool
     previous_import: dict | None
     rows: list[PreviewRow]
@@ -56,6 +61,7 @@ class ImportPreview:
     duplicate_count: int
     warnings: list[str] = field(default_factory=list)
     skipped_lines: int = 0
+    excluded_lines: int = 0
 
     def to_json(self) -> str:
         """JSON 文字列にする"""
@@ -94,6 +100,8 @@ class ImportResult:
     jev_errors: int
     rule_matched: int
     months: list[str]
+    income: int = 0  # 取り込んだ明細のうち収入の件数
+    added_categories: list[str] = field(default_factory=list)
 
 
 class Importer:
@@ -138,6 +146,8 @@ class Importer:
                     source_line=r.source_line,
                     duplicate=existing is not None,
                     existing_category=existing.category if existing is not None else '',
+                    kind=r.kind,
+                    category_hint=r.category_hint,
                 )
             )
 
@@ -149,6 +159,7 @@ class Importer:
             card=parsed.card,
             encoding=parsed.encoding,
             header_line=parsed.header_line,
+            profile=parsed.profile,
             already_imported=previous is not None,
             previous_import=asdict(previous) if previous else None,
             rows=rows,
@@ -156,14 +167,16 @@ class Importer:
             duplicate_count=len(rows) - new_count,
             warnings=parsed.warnings,
             skipped_lines=parsed.skipped_lines,
+            excluded_lines=parsed.excluded_lines,
         )
         self.store(preview)
         logger.info(
-            'import preview: file=%s rows=%d new=%d dup=%d already imported=%s',
-            filename,
+            'import preview: profile=%s rows=%d new=%d dup=%d excluded=%d already imported=%s',
+            parsed.profile,
             len(rows),
             new_count,
             preview.duplicate_count,
+            parsed.excluded_lines,
             preview.already_imported,
         )
         return preview
@@ -234,16 +247,21 @@ class Importer:
                 '取り込める新規の明細がありません（プレビュー後に取り込まれたか、すでに取り込み済みの CSV です）。'
             )
 
+        # 許可リストが使うカテゴリ（住宅ローン・売電収入など）が古いファイルに無ければ先に足す
+        added_categories = ensure_categories(data, [r.category_hint for r in rows])
         categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
         import_id = new_id('imp')
         imported_at = now_iso()
         prepared_rules = prepare_rules(data.merchant_rules)
 
-        counts = {'imported': 0, 'dup': len(preview.rows) - len(rows), 'auto': 0, 'review': 0, 'errors': 0, 'rules': 0}
+        counts = dict.fromkeys(('imported', 'auto', 'review', 'errors', 'rules', 'income'), 0)
+        counts['dup'] = len(preview.rows) - len(rows)
         months: set[str] = set()
         for row in rows:
             usage_date = date.fromisoformat(row.usage_date)
-            result = self.pipeline.classify(row.merchant_normalized, row.amount, usage_date, categories, prepared_rules)
+            result = self.pipeline.classify(
+                row.merchant_normalized, row.amount, usage_date, categories, prepared_rules, row.category_hint
+            )
             tx = Transaction(
                 id=new_id('tx'),
                 usage_date=usage_date,
@@ -257,10 +275,12 @@ class Importer:
                 import_id=import_id,
                 imported_at=imported_at,
                 row_key=row.row_key,
+                kind=row.kind,
             )
             data.transactions.append(tx)
             months.add(tx.month)
             counts['imported'] += 1
+            counts['income'] += int(tx.kind == KIND_INCOME)
             counts['rules'] += int(result.source == SOURCE_RULE)
             counts['errors'] += int(result.source == SOURCE_ERROR)
             if self.pipeline.is_auto_accepted(result):
@@ -280,9 +300,11 @@ class Importer:
         )
         data.transactions.sort(key=lambda t: (t.usage_date, t.imported_at, t.id))
         logger.info(
-            'import committed: import id=%s imported=%d dup=%d auto=%d review=%d errors=%d',
+            'import committed: import id=%s profile=%s imported=%d income=%d dup=%d auto=%d review=%d errors=%d',
             import_id,
+            preview.profile,
             counts['imported'],
+            counts['income'],
             counts['dup'],
             counts['auto'],
             counts['review'],
@@ -297,6 +319,8 @@ class Importer:
             jev_errors=counts['errors'],
             rule_matched=counts['rules'],
             months=sorted(months),
+            income=counts['income'],
+            added_categories=added_categories,
         )
 
 

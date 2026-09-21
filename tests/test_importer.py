@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.models import Allocation, ClassificationResult, MerchantRule
 from smart_ledger.services.classifier import ClassificationPipeline, NullClassifier
 from smart_ledger.services.excel_repository import ExcelRepository
@@ -187,7 +188,7 @@ def test_undo_import_removes_only_that_import(tmp_path: Path, repo: ExcelReposit
     assert [a.transaction_id for a in data.allocations] == [kept.id]
     assert [i.import_id for i in data.imports] == [second.import_id]
     assert len(data.merchant_rules) == 1
-    assert len(data.category_names()) == 10
+    assert len(data.category_names()) == len(DEFAULT_CATEGORIES)
 
     # 履歴が消えたので同じ CSV を取り込み直せる。b.csv 取込時に重複としてスキップされた 10 行は
     # a.csv 側の明細のままだったので、a.csv の取り消しで消え、再取込では全行が新規になる
@@ -233,3 +234,75 @@ def test_undo_import_unknown_id_raises(repo: ExcelRepository) -> None:
     """
     with pytest.raises(ImportNotFoundError):
         undo_import(repo.load(), 'imp_nothing')
+
+
+def test_bank_csv_commit_sets_kind_and_category_without_classifier(
+    tmp_path: Path, repo: ExcelRepository, fixture_bank_csv_bytes: bytes
+) -> None:
+    """銀行 CSV は許可リストでカテゴリが決まるため分類器を呼ばず、収入は kind=income で記録される
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    stub = StubClassifier({})
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(stub, 0.85))
+    data = repo.load()
+
+    preview = importer.preview(data, 'bank.csv', fixture_bank_csv_bytes)
+    assert (preview.profile, preview.card) == ('bank', '銀行口座')
+    assert preview.new_count == 5 and preview.excluded_lines == 4
+
+    result = importer.commit(data, preview)
+    assert stub.calls == []  # Jev には 1 件も問い合わせない
+    assert (result.imported, result.income, result.rule_matched, result.needs_review) == (5, 2, 5, 0)
+
+    loans = [t for t in data.transactions if t.category == '住宅ローン']
+    solar = [t for t in data.transactions if t.category == '売電収入']
+    assert [t.amount for t in loans] == [69000, 70000, 70000]
+    assert all(t.kind == 'expense' and t.card == '銀行口座' for t in loans)
+    assert [t.amount for t in solar] == [6500, 7000]
+    assert all(t.is_income and t.classification_source == 'rule' for t in solar)
+
+
+def test_bank_csv_commit_adds_missing_categories(
+    tmp_path: Path, repo: ExcelRepository, fixture_bank_csv_bytes: bytes
+) -> None:
+    """許可リストのカテゴリが categories シートに無い旧ファイルでは、取込時に追加される
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(StubClassifier({}), 0.85))
+    data = repo.load()
+    data.categories = [c for c in data.categories if c.category not in ('住宅ローン', '売電収入')]
+
+    result = importer.commit(data, importer.preview(data, 'bank.csv', fixture_bank_csv_bytes))
+    assert sorted(result.added_categories) == ['住宅ローン', '売電収入']  # 追加順は明細の並び順に従う
+    assert sorted(data.category_names()[-2:]) == ['住宅ローン', '売電収入']
+    assert data.category_criteria()['売電収入'].startswith('太陽光発電')
+
+
+def test_bank_csv_duplicate_detection_ignores_added_period(
+    tmp_path: Path, repo: ExcelRepository, fixture_bank_csv_bytes: bytes
+) -> None:
+    """期間を重ねてダウンロードしても、重なった行は重複として弾かれる
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(StubClassifier({}), 0.85))
+    data = repo.load()
+    importer.commit(data, importer.preview(data, 'bank.csv', fixture_bank_csv_bytes))
+
+    # 新しい月の住宅ローン 1 行を先頭（新しい日付が先）に足した再ダウンロード
+    lines = fixture_bank_csv_bytes.decode('cp932').split('\r\n')
+    added = '"2026/10/28","約定返済　円　住宅","70,000",,"120,000","-"'
+    preview = importer.preview(data, 'bank2.csv', '\r\n'.join([lines[0], added, *lines[1:]]).encode('cp932'))
+    assert preview.new_count == 1 and preview.duplicate_count == 5
+    assert importer.commit(data, preview).imported == 1

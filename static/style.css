@@ -15,6 +15,7 @@ small { font-size: 0.75em; }
 .muted { color: var(--muted); }
 .small { font-size: 0.8rem; }
 .ok { color: var(--ok); } .warn { color: var(--warn); } .up { color: var(--danger); } .down { color: var(--ok); }
+.income { color: var(--ok); }  /* 収入の金額（支出と取り違えないよう + 付きで緑にする） */
 .nowrap { white-space: nowrap; }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -85,6 +86,7 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .cat-ratio { width: 3.6rem; text-align: right; color: var(--muted); font-size: 0.8rem; }
 .bar { height: 8px; background: #eef0f3; border-radius: 4px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 4px; }
+.bar-fill.income { background: var(--ok); }
 .c0{background:var(--c0)} .c1{background:var(--c1)} .c2{background:var(--c2)} .c3{background:var(--c3)} .c4{background:var(--c4)}
 .c5{background:var(--c5)} .c6{background:var(--c6)} .c7{background:var(--c7)} .c8{background:var(--c8)} .c9{background:var(--c9)}
 
@@ -106,6 +108,8 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .badge.src-error { background: #fef2f2; color: #991b1b; }
 .badge.dup { background: #fef3c7; color: #92400e; }
 .badge.new { background: #ecfdf5; color: #065f46; }
+.badge.income { background: #ecfdf5; color: #065f46; margin-right: 0.25rem; }
+.badge.skip { background: #f3f4f6; color: #6b7280; }
 .memo { display: block; font-size: 0.75rem; color: var(--muted); }
 
 /* 明細: PC はテーブル、スマホはカード */
@@ -195,6 +199,8 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .annual-table tr > :first-child { position: sticky; left: 0; z-index: 1; background: var(--card); }
 .annual-table .total { font-weight: 700; background: #f9fafb; }
 .annual-table tfoot th, .annual-table tfoot td { border-top: 2px solid var(--line); border-bottom: 0; font-weight: 700; }
+.annual-table tbody.income-rows tr:first-child > * { border-top: 2px solid var(--line); }
+.annual-table tbody.income-rows td, .annual-table tfoot .income-total td { color: var(--ok); }
 .annual-table a { color: inherit; }
 .annual-table a:hover { color: var(--primary); text-decoration: underline; }
 .scroll-hint { display: none; }

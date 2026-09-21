@@ -29,8 +29,18 @@ def fixture_csv_bytes(fixtures_dir: Path) -> bytes:
 
 
 @pytest.fixture
+def fixture_bank_csv_bytes(fixtures_dir: Path) -> bytes:
+    """架空データの CP932 銀行口座明細 CSV（住宅ローン 3 行・売電 2 行と、対象外の 4 行）
+
+    Args:
+        fixtures_dir: tests/fixtures のパス
+    """
+    return (fixtures_dir / 'sample_bank_cp932.csv').read_bytes()
+
+
+@pytest.fixture
 def categories() -> list[str]:
-    """初期カテゴリ 10 件"""
+    """初期カテゴリ（constants.DEFAULT_CATEGORIES）"""
     return list(DEFAULT_CATEGORIES)
 
 

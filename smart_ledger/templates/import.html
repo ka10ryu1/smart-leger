@@ -16,7 +16,8 @@
 
 {% if not preview %}
 <section class="card">
-  <p>クレジットカード会社の Web サイトからダウンロードした利用明細 CSV を選択してください。すぐには保存されず、まずプレビューを表示します。</p>
+  <p>クレジットカード会社の利用明細 CSV、または銀行口座の入出金明細 CSV を選択してください。すぐには保存されず、まずプレビューを表示します。</p>
+  <p class="hint">銀行口座の CSV は住宅ローンの返済と売電の入金だけを取り込み、税金・利息・口座間の資金移動などは「対象外」として読み飛ばします。</p>
   <form method="post" action="{{ url_for('ledger.import_preview') }}" enctype="multipart/form-data" class="stack">
     <input type="file" name="csv_file" accept=".csv,text/csv" required>
     <button class="btn btn-primary" type="submit">解析してプレビュー</button>
@@ -26,11 +27,14 @@
 <section class="card">
   <h2>プレビュー: {{ preview.filename }}</h2>
   <dl class="kv">
-    <dt>カード</dt><dd>{{ preview.card or '-' }}</dd>
+    <dt>{{ '口座' if preview.profile == 'bank' else 'カード' }}</dt><dd>{{ preview.card or '-' }}</dd>
     <dt>文字コード</dt><dd>{{ preview.encoding }}(ヘッダー {{ preview.header_line }} 行目)</dd>
     <dt>明細件数</dt><dd>{{ preview.rows|length }} 件</dd>
     <dt>新規</dt><dd><strong class="ok">{{ preview.new_count }} 件</strong></dd>
     <dt>重複(取込済み)</dt><dd><strong class="{{ 'warn' if preview.duplicate_count }}">{{ preview.duplicate_count }} 件</strong></dd>
+    {% if preview.excluded_lines %}
+    <dt>対象外</dt><dd>{{ preview.excluded_lines }} 件<span class="hint">(住宅ローン・売電以外の行)</span></dd>
+    {% endif %}
   </dl>
   {% if preview.already_imported %}
     <div class="flash flash-warning">このCSVはすでに取り込み済みです。({{ preview.previous_import.imported_at }} に取込 / import_id: {{ preview.previous_import.import_id }}){% if preview.new_count %} 取り消しで消えた明細があるため、新規 {{ preview.new_count }} 件だけ取り込めます。{% endif %}</div>
@@ -65,8 +69,12 @@
         <td class="muted">{{ r.source_line }}</td>
         <td class="nowrap">{{ r.usage_date }}</td>
         <td class="merchant" title="{{ r.merchant_raw }}">{{ r.merchant_normalized }}</td>
-        <td class="num">{{ r.amount|yen }} 円</td>
-        <td>{% if r.duplicate %}<span class="badge dup">重複{% if r.existing_category %}: {{ r.existing_category }}{% endif %}</span>{% else %}<span class="badge new">新規</span>{% endif %}</td>
+        <td class="num {{ 'income' if r.kind == 'income' }}">{{ '+' if r.kind == 'income' }}{{ r.amount|yen }} 円</td>
+        <td>
+          {% if r.kind == 'income' %}<span class="badge income">収入</span>{% endif %}
+          {% if r.category_hint %}<span class="badge cat">{{ r.category_hint }}</span>{% endif %}
+          {% if r.duplicate %}<span class="badge dup">重複{% if r.existing_category %}: {{ r.existing_category }}{% endif %}</span>{% else %}<span class="badge new">新規</span>{% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>
@@ -78,9 +86,13 @@
       <div class="tx-card-row">
         <span class="tx-date">{{ r.usage_date[5:]|replace('-', '/') }}</span>
         <span class="tx-merchant">{{ r.merchant_normalized }}</span>
-        <span class="tx-amount">{{ r.amount|yen }}<small>円</small></span>
+        <span class="tx-amount {{ 'income' if r.kind == 'income' }}">{{ '+' if r.kind == 'income' }}{{ r.amount|yen }}<small>円</small></span>
       </div>
-      <div class="tx-card-row sub">{% if r.duplicate %}<span class="badge dup">重複</span>{% else %}<span class="badge new">新規</span>{% endif %}</div>
+      <div class="tx-card-row sub">
+        {% if r.kind == 'income' %}<span class="badge income">収入</span>{% endif %}
+        {% if r.category_hint %}<span class="badge cat">{{ r.category_hint }}</span>{% endif %}
+        {% if r.duplicate %}<span class="badge dup">重複</span>{% else %}<span class="badge new">新規</span>{% endif %}
+      </div>
     </li>
   {% endfor %}
   </ul>
@@ -92,7 +104,7 @@
   {% if imports %}
   <div class="tx-table-wrap">
   <table class="tx-table">
-    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード</th><th class="num">件数</th><th>hash</th><th></th></tr></thead>
+    <thead><tr><th>取込日時</th><th>ファイル</th><th>カード / 口座</th><th class="num">件数</th><th>hash</th><th></th></tr></thead>
     <tbody>
     {% for i in imports %}
       <tr>

@@ -343,7 +343,7 @@ def test_category_management_flow(client: FlaskClient) -> None:
     assert '並び順を変更しました' in body
 
     body = client.post(
-        '/categories/move', data={'category': 'その他', 'direction': 'down'}, follow_redirects=True
+        '/categories/move', data={'category': '売電収入', 'direction': 'down'}, follow_redirects=True
     ).get_data(as_text=True)
     assert '既に端にあるため並び順は変わりません' in body
 
@@ -533,3 +533,55 @@ def test_annual_http_exports_empty_year(client: FlaskClient) -> None:
     xlsx_response = client.get('/annual/export.xlsx?year=2027')
     assert xlsx_response.status_code == 200
     assert xlsx_response.get_data()[:2] == b'PK'
+
+
+def test_bank_csv_import_flow(client: FlaskClient, fixture_bank_csv_bytes: bytes) -> None:
+    """銀行 CSV の取込 → ダッシュボードの収入・収支 → 年間表 → 収支での絞り込み
+
+    Args:
+        client: テストクライアント
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    html = upload(client, fixture_bank_csv_bytes, 'bank.csv')
+    assert '5 件を取り込む' in html
+    assert '<dt>口座</dt><dd>銀行口座</dd>' in html
+    assert '4 件<span class="hint">(住宅ローン・売電以外の行)</span>' in html
+    assert '地方税' not in html and '定額自動入金' not in html  # 対象外の行は一覧にも出さない
+
+    body = import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+    assert '5 件を取り込みました' in body
+    assert 'うち 2 件は収入として記録しました' in body
+    assert '要確認' not in body or '要確認 0 件' in body  # 許可リストで確定するので要確認にならない
+
+    # 2026-09: 支出 70,000 x 2 = 140,000 / 収入 7,000 / 収支 -133,000
+    html = client.get('/?month=2026-09').get_data(as_text=True)
+    assert '140,000' in html and '+7,000' in html and '-133,000' in html
+
+    html = client.get('/annual?year=2026').get_data(as_text=True)
+    assert '209,000' in html  # 年間の総支出 69,000 + 140,000
+    assert '+13,500' in html  # 年間の収入 6,500 + 7,000
+    assert '-195,500' in html  # 収支
+
+    html = client.get('/transactions?kind=income').get_data(as_text=True)
+    assert '<span class="badge cat">売電収入</span>' in html  # カテゴリ選択の option とは別に明細行に出る
+    assert '<span class="badge cat">住宅ローン</span>' not in html  # 支出は絞り込みで除かれる
+    assert '収入 <strong class="income">+13,500 円</strong>' in html
+
+
+def test_income_is_not_counted_as_spending_across_cards(
+    client: FlaskClient, fixture_csv_bytes: bytes, fixture_bank_csv_bytes: bytes
+) -> None:
+    """カード明細と銀行明細を両方取り込んでも、総支出に収入が混ざらない
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 のカード fixture
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    import_csv(client, fixture_csv_bytes, 'card.csv')
+    import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+
+    # 8月 総支出 = カード 45,590 + 住宅ローン 69,000 = 114,590（売電 6,500 は含めない）
+    html = client.get('/?month=2026-08').get_data(as_text=True)
+    assert '114,590' in html and '+6,500' in html
+    assert '-108,090' in html  # 収支

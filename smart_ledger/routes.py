@@ -25,6 +25,7 @@ from .config import Config
 from .constants import (
     CATEGORY_DESCRIPTIONS,
     FALLBACK_CATEGORY,
+    KIND_LABELS,
     MONTH_PATTERN,
     SOURCE_LABELS,
     SOURCE_MANUAL,
@@ -41,6 +42,8 @@ from .services.aggregation import (
     monthly_summary,
     monthly_trend,
     shift_month,
+    total_income,
+    total_spending,
     transactions_in_month,
 )
 from .services.allocations import AllocationInput, replace_allocations, validate_allocations
@@ -164,6 +167,16 @@ def safe_back() -> str:
     return url_for('ledger.transactions')
 
 
+@bp.app_template_filter('kind_label')
+def kind_label(value: str) -> str:
+    """kind を表示用ラベルにする
+
+    Args:
+        value: expense / income
+    """
+    return KIND_LABELS.get(value, value)
+
+
 @bp.app_template_filter('source_label')
 def source_label(value: str) -> str:
     """classification_source を表示用ラベルにする
@@ -183,6 +196,7 @@ def inject_globals() -> dict[str, object]:
         'dropbox_enabled': config.dropbox_path is not None,
         'jev_enabled': bool(config.typesafe_api_key),
         'excel_path': str(config.excel_path),
+        'kind_labels': KIND_LABELS,
     }
 
 
@@ -342,7 +356,7 @@ def annual_export(fmt: str) -> Response:
 
 @bp.route('/transactions')
 def transactions() -> str:
-    """明細一覧（月・カテゴリ・分類元・加盟店名で絞り込み）"""
+    """明細一覧（月・収支・カテゴリ・分類元・加盟店名で絞り込み）"""
     data = load_data()
     month = request.args.get('month', '').strip()
     if month and not MONTH_PATTERN.match(month):
@@ -351,9 +365,16 @@ def transactions() -> str:
     category = request.args.get('category', '').strip()
     query = request.args.get('q', '').strip().casefold()
     source = request.args.get('source', '').strip()
+    kind = request.args.get('kind', '').strip()
+    if kind not in KIND_LABELS:
+        kind = ''
+
     txs = list(data.transactions)
     if month:
         txs = transactions_in_month(txs, month)
+
+    if kind:
+        txs = [t for t in txs if t.kind == kind]
 
     if category:
         txs = [t for t in txs if (t.category or UNCLASSIFIED_LABEL) == category]
@@ -373,10 +394,17 @@ def transactions() -> str:
     return render_template(
         'transactions.html',
         transactions=txs,
-        total=sum(t.amount for t in txs),
+        total=total_spending(txs),
+        income_total=total_income(txs),
         months=available_months(data.transactions),
         categories=names,
-        filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
+        filters={
+            'month': month,
+            'category': category,
+            'q': request.args.get('q', ''),
+            'source': source,
+            'kind': kind,
+        },
         alloc_ids={a.transaction_id for a in data.allocations},
     )
 
@@ -616,6 +644,12 @@ def import_commit() -> WerkzeugResponse:
         f'{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、'
         f'ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。'
     )
+    if result.income:
+        msg += f' うち {result.income} 件は収入として記録しました。'
+
+    if result.added_categories:
+        msg += f' カテゴリ「{"」「".join(result.added_categories)}」を追加しました。'
+
     if result.jev_errors:
         msg += f' Jev 分類エラー {result.jev_errors} 件は「その他」として要確認に入っています。'
 
