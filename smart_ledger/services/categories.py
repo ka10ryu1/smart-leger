@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 
-from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY, UNCLASSIFIED_LABEL
+from ..constants import CATEGORY_DESCRIPTIONS, FALLBACK_CATEGORY, FORMULA_PREFIXES, UNCLASSIFIED_LABEL
 from ..models import Category, LedgerData
 from .normalize import normalize_merchant
 
@@ -50,7 +50,7 @@ def category_usage(data: LedgerData) -> dict[str, Counter[str]]:
     return usage
 
 
-def validate_category_name(name: str, formula_prefixes: str = '=+-@') -> str:
+def validate_category_name(name: str, formula_prefixes: str = FORMULA_PREFIXES) -> str:
     """カテゴリ名を正規化して検証する（空文字・数式として解釈される先頭文字・予約語「未分類」は CategoryError）
 
     Args:

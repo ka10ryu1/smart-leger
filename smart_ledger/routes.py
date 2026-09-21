@@ -366,9 +366,8 @@ def transactions() -> str:
 
     txs.sort(key=lambda t: (t.usage_date, t.id), reverse=True)
     names = data.category_names()
-    if (
-        UNCLASSIFIED_LABEL not in names
-    ):  # 空カテゴリの明細も絞り込めるようにする（旧データの同名カテゴリとは重複させない）
+    # 空カテゴリの明細も絞り込めるようにする（旧データに同名カテゴリが残っていれば重複させない）
+    if UNCLASSIFIED_LABEL not in names:
         names.append(UNCLASSIFIED_LABEL)
 
     return render_template(

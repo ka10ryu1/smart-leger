@@ -23,6 +23,7 @@ DEFAULT_CATEGORIES: tuple[str, ...] = (
 )
 FALLBACK_CATEGORY = 'その他'
 UNCLASSIFIED_LABEL = '未分類'  # category が空の明細の表示・集計用ラベル
+FORMULA_PREFIXES = '=+-@'  # この文字で始まるセルは Excel が数式として扱う（カテゴリ名の検証と CSV エクスポートで使う）
 
 # Jev のカテゴリ選択に渡す説明文（criteria）。カテゴリ自体は categories シートで管理する
 CATEGORY_DESCRIPTIONS: dict[str, str] = {

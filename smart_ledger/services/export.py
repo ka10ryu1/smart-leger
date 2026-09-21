@@ -7,6 +7,7 @@ import io
 
 from openpyxl import Workbook
 
+from ..constants import FORMULA_PREFIXES
 from .aggregation import AnnualTable
 
 
@@ -26,7 +27,7 @@ def annual_table_rows(table: AnnualTable) -> list[list[str | int]]:
     ]
 
 
-def annual_csv(table: AnnualTable, formula_prefixes: str = '=+-@') -> bytes:
+def annual_csv(table: AnnualTable, formula_prefixes: str = FORMULA_PREFIXES) -> bytes:
     """年間表を BOM 付き UTF-8 の CSV にする（Windows の Excel で開いても文字化けしない）
 
     先頭が数式記号のカテゴリ名（旧バージョンで登録できたもの）には ' を付け、Excel で数式として評価させない
@@ -36,7 +37,7 @@ def annual_csv(table: AnnualTable, formula_prefixes: str = '=+-@') -> bytes:
         formula_prefixes: この文字で始まるセルを ' で打ち消す
     """
     rows = [
-        [f"'{c}" if isinstance(c, str) and c[:1] in formula_prefixes and c else c for c in row]
+        [f"'{c}" if isinstance(c, str) and c.startswith(tuple(formula_prefixes)) else c for c in row]
         for row in annual_table_rows(table)
     ]
     buf = io.StringIO()
