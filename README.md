@@ -10,6 +10,10 @@
 - スマートフォン幅でも見やすいレスポンシブ UI
 - Dropbox デスクトップアプリの同期フォルダへ自動コピー(閲覧・バックアップ用)
 
+![Smart Ledger のダッシュボード](docs/images/dashboard-top.png)
+
+ダッシュボードの上部です(デモ用の架空データ)。この続きと、ほかの画面のキャプチャは [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) にまとめています。
+
 ## 主な機能
 
 | 画面 | 内容 |
@@ -290,6 +294,7 @@ smart-ledger/
 │  │  └─ backup.py            # 世代バックアップ・Dropbox コピー
 │  └─ templates/              # Jinja2 テンプレート
 ├─ static/                    # CSS / JS
+├─ docs/                      # SCREENSHOTS.md, ROADMAP.md, images/
 ├─ data/                      # household.xlsx, backup/, staging/(Git 管理外)
 ├─ logs/                      # smart_ledger.log(Git 管理外)
 └─ tests/                     # pytest(fixtures/ に架空データの CSV)
