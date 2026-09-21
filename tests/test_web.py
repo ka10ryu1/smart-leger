@@ -192,8 +192,8 @@ def test_web_flow(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
     assert '取込履歴が見つかりません' in body
 
 
-def test_invalid_month_param_is_ignored(client: FlaskClient) -> None:
-    """不正な month はエラーにならず無視される
+def test_invalid_month_and_year_params_are_handled(client: FlaskClient) -> None:
+    """不正な month / year は無視し、解釈できる全角年は受け入れる
 
     Args:
         client: テストクライアント
@@ -466,8 +466,8 @@ def test_import_undo_confirm_text_is_attribute_safe(client: FlaskClient, fixture
     assert '明細 10 件を削除しました' in body
 
 
-def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
-    """年間表は取り込んだ年を既定で表示し、セルは月・カテゴリの明細一覧へリンクし、CSV / Excel を返す
+def test_annual_page_summary_and_links(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """年間表は月平均・年移動を表示し、通常カテゴリと未分類のセルから該当明細へ移動できる
 
     Args:
         client: テストクライアント
@@ -475,20 +475,35 @@ def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -
     """
     import_csv(client, fixture_csv_bytes)
 
-    def add_unclassified(data: LedgerData) -> None:
+    def add_link_targets(data: LedgerData) -> None:
         data.transactions.append(Transaction('tx_none', date(2026, 7, 2), 'N', 'N', 300, ''))
+        data.transactions.append(Transaction('tx_food', date(2026, 7, 3), 'F', 'F', 400, '食費'))
 
-    client.application.extensions['smart_ledger'].repo.update(add_unclassified)
+    client.application.extensions['smart_ledger'].repo.update(add_link_targets)
     html = client.get('/annual').get_data(as_text=True)
     assert '2026年の総支出' in html
     assert '45,590' in html  # 8 月の月間総支出（test_web_flow と同じ値）
-    assert 'href="/transactions?month=2026-08&amp;category=' in html
+    assert '16,013' in html and '明細のある 3 か月で割った値' in html
+    food_path = '/transactions?month=2026-07&category=%E9%A3%9F%E8%B2%BB'
+    unclassified_path = '/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E'
+    assert f'href="{food_path.replace("&", "&amp;")}"' in html
+    assert f'href="{unclassified_path.replace("&", "&amp;")}"' in html
     assert 'href="/annual?year=2025"' in html and 'href="/annual?year=2027"' in html
     assert '2027年の明細はありません' in client.get('/annual?year=2027').get_data(as_text=True)
-    unclassified = client.get('/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E').get_data(as_text=True)
+    assert 'tx_food' in client.get(food_path).get_data(as_text=True)
+    unclassified = client.get(unclassified_path).get_data(as_text=True)
     assert 'tx_none' in unclassified  # 未分類セルのリンク先に category が空の明細が出る
     assert '<option value="未分類" selected>' in unclassified  # 絞り込みフォームでも 未分類 が選ばれている
 
+
+def test_annual_http_exports(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """年間表の CSV / Excel を正しい応答ヘッダーと内容でダウンロードできる
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
     csv_response = client.get('/annual/export.csv?year=2026')
     assert csv_response.status_code == 200
     assert csv_response.headers['Content-Type'] == 'text/csv; charset=utf-8'
@@ -501,3 +516,20 @@ def test_annual_page_and_export(client: FlaskClient, fixture_csv_bytes: bytes) -
     assert xlsx_response.mimetype == 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     assert xlsx_response.get_data()[:2] == b'PK'
     assert client.get('/annual/export.pdf').status_code == 404
+
+
+def test_annual_http_exports_empty_year(client: FlaskClient) -> None:
+    """明細が無い年も CSV / Excel をダウンロードできる
+
+    Args:
+        client: テストクライアント
+    """
+    csv_response = client.get('/annual/export.csv?year=2027')
+    assert csv_response.status_code == 200
+    lines = csv_response.get_data().decode('utf-8-sig').splitlines()
+    assert lines[0].startswith('カテゴリ,1月,')
+    assert lines[-1] == f'月間総支出,{",".join(["0"] * 13)}'
+
+    xlsx_response = client.get('/annual/export.xlsx?year=2027')
+    assert xlsx_response.status_code == 200
+    assert xlsx_response.get_data()[:2] == b'PK'

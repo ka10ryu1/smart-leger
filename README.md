@@ -19,7 +19,7 @@
 | 画面 | 内容 |
 | --- | --- |
 | ダッシュボード | 対象年月の総支出・前月比・カテゴリ別支出と割合・直近 6 か月推移・最近の明細。月切替は `← 前月 / 翌月 →` |
-| 年間表 | 対象年の 12 か月 × カテゴリのマトリクス(右端に年間合計、最下行に月間総支出)と年間総支出・月平均。年切替は `← 前年 / 翌年 →`、カテゴリの金額を押すと該当月・カテゴリの明細一覧へ、月間総支出を押すとその月のダッシュボードへ。CSV / Excel でエクスポート |
+| 年間表 | 対象年の 12 か月 × カテゴリのマトリクス(右端に年間合計、最下行に月間総支出)と年間総支出・月平均。年切替は `← 前年 / 翌年 →`、カテゴリの金額を押すと該当月・カテゴリの明細一覧へ、月間総支出を押すとその月のダッシュボードへ。CSV / Excel でエクスポート。内訳で分割したカテゴリの金額は、明細自身のカテゴリで絞り込む一覧と一致しない場合があります |
 | 明細一覧 | 利用日・加盟店・金額・カテゴリ・分類元(rule / jev / manual / error)・confidence。月・カテゴリ・分類元・加盟店名で絞り込み |
 | CSV 取込 | CSV 選択 → 解析 → プレビュー(新規件数 / 重複件数) → 「取り込む」で新規明細だけ分類して Excel 保存 |
 | 要確認 | confidence < 0.85、Jev エラー、未分類の明細。その場でカテゴリ確定 |
@@ -57,16 +57,15 @@ git clone <このリポジトリのURL> smart-ledger
 cd smart-ledger
 ```
 
-### 2. setup.ps1 を実行
+### 2. setup.cmd を実行
 
-エクスプローラーで **`setup.cmd` をダブルクリック** するのが最も簡単です(実行ポリシーの影響を受けず、終了後もウィンドウが残ります)。
-PowerShell から実行する場合は次のとおりです。
+エクスプローラーで **`setup.cmd` をダブルクリック** します。PowerShell から実行する場合も入口は同じです。
 
 ```powershell
-.\setup.ps1
+.\setup.cmd
 ```
 
-`setup.ps1` は次を行います。
+`setup.cmd` は内部の PowerShell スクリプトを呼び出し、次を行います。利用者が `.ps1` を直接選ぶ必要はありません。
 
 1. Python 3.12+ を検出(`py -3.12` → `py -3.13` → `py -3` → `python` → `python3` の順)
 2. 仮想環境 `.venv` を作成
@@ -74,20 +73,14 @@ PowerShell から実行する場合は次のとおりです。
 4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
 5. `.env` が無ければ `.env.example` からコピー
 
-実行ポリシーで止まる場合は次のように実行してください。
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
-```
-
 #### うまく動かないとき
 
-- **ウィンドウがすぐ閉じる**: `setup.cmd` / `start.cmd` から起動してください。`.ps1` を右クリック → 「PowerShell で実行」した場合、実行ポリシーのエラーはスクリプトが始まる前に出るため一瞬で閉じます。`setup.ps1` 自体は終了時に Enter 待ちをし、実行内容を `logs\setup_YYYYMMDD_HHMMSS.log` に記録します(`-NoPause` で待ちを省略できます)
+- **ウィンドウがすぐ閉じる**: PowerShell を開いて `.\setup.cmd` または `.\start.cmd` を実行すると、閉じる前のメッセージを確認できます。セットアップの詳細は `logs\setup_YYYYMMDD_HHMMSS.log` にも記録されます
 - **起動したのに画面が古い / 変更が反映されない**: 起動中のウィンドウを閉じずに再度 `start.cmd` を実行すると、Windows では同じポートに 2 つ目のサーバーが同居し、古い方が応答し続けることがあります。現在は 2 つ目の起動を検知して既存の画面をブラウザで開くだけにしています。コードを更新したら、起動中のウィンドウで Ctrl+C してから `start.cmd` を実行してください
 - **「ポート 5000 は使用中ですが Smart Ledger の応答を確認できませんでした」と出る**: 別のプログラムが同じポートを使っているか、応答しなくなった Smart Ledger のウィンドウが残っています。該当ウィンドウを閉じるか、`.env` の `SMART_LEDGER_PORT` を別の番号に変えてください。「ポート 5000 を使用できません(予約済み、または権限がありません)」の場合は OS がそのポートを予約しているので、ポート番号を変えてください
-- **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります(`start.ps1` が注意を表示します)。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
-- **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行するか、上記の `-ExecutionPolicy Bypass` 付きで実行してください。`git clone` したファイルには付きません
-- **Python 3.12 以上が見つかりません**: `setup.ps1` は `py` ランチャー → `python` → レジストリの順に探し、試した候補をログに出します。Microsoft Store 版 Python でも動作します。python.org 版をインストールする場合は「Add python.exe to PATH」にチェックしてください
+- **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
+- **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行してから `setup.cmd` を再実行してください。`git clone` したファイルには付きません
+- **Python 3.12 以上が見つかりません**: `setup.cmd` は内部で `py` ランチャー → `python` → レジストリの順に探し、試した候補をログに出します。Microsoft Store 版 Python でも動作します。python.org 版をインストールする場合は「Add python.exe to PATH」にチェックしてください
 - **pip install に失敗**: ネットワーク・プロキシ設定を確認してください。会社ネットワークでは `pip config set global.proxy http://...` が必要な場合があります
 
 ### 3. .env を設定
@@ -125,12 +118,12 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 カテゴリ説明にもカナ例を含めています(`smart_ledger/constants.py` の `CATEGORY_DESCRIPTIONS`。カテゴリ画面の「説明」で上書きできます)。
 氏名・会員番号・カード番号は送信しません(そもそも CSV から読み取りません)。
 
-### 4. start.ps1 で起動
+### 4. start.cmd で起動
 
 `start.cmd` をダブルクリック、または PowerShell で次を実行します。
 
 ```powershell
-.\start.ps1
+.\start.cmd
 ```
 
 - `.venv` の Python で Flask を起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます
@@ -223,6 +216,7 @@ KYASH 10,000 円
 - 内訳が無い明細 → `transactions.category` でカテゴリ集計
 - 内訳がある明細 → **月間総支出では `transactions.amount` を 1 回だけ**、**カテゴリ別集計では `allocations` を使用**
 - 二重計上は発生しません(pytest で検証)。年間表も同じ規則で、月間総支出の行は明細金額、カテゴリの行は内訳で集計します
+- 明細一覧のカテゴリ絞り込みは現状 `transactions.category` が対象です。内訳で分割したカテゴリの年間表セルでは、リンク先の一覧と金額が一致しない場合があります
 
 ### 年間表のエクスポート
 
@@ -271,8 +265,8 @@ Dropbox/SmartLedger/
 smart-ledger/
 ├─ app.py                     # 起動スクリプト(--open-browser でブラウザを開く)
 ├─ requirements.txt
-├─ setup.ps1 / start.ps1      # Windows PowerShell 用セットアップ・起動(logs/setup_*.log に記録)
-├─ setup.cmd / start.cmd      # 上記をダブルクリックで実行するランチャー
+├─ setup.cmd / start.cmd      # Windows で利用者が実行するセットアップ・起動ランチャー
+├─ scripts/windows/           # ランチャーから呼び出す内部 PowerShell 実装
 ├─ .env.example               # 設定テンプレート(.env は Git 管理外)
 ├─ smart_ledger/
 │  ├─ __init__.py             # create_app

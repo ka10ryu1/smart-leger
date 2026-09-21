@@ -1,11 +1,9 @@
-﻿# Smart Ledger 起動スクリプト
-#   使い方: start.ps1 を右クリック → 「PowerShell で実行」、または PowerShell で  .\start.ps1
-#   実行ポリシーで止まる場合:  powershell -ExecutionPolicy Bypass -File .\start.ps1
-#   終了時に Enter 待ちをしない場合:  .\start.ps1 -NoPause
+﻿# Smart Ledger 起動処理(root の start.cmd から呼び出す内部スクリプト)
 param([switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
-Set-Location -Path $PSScriptRoot
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+Set-Location -LiteralPath $projectRoot
 
 function Finish([int]$code) {
     if (-not $NoPause) {
@@ -22,9 +20,9 @@ function Fail([string]$message) {
 }
 
 try {
-    $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+    $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path $venvPython)) {
-        Fail "仮想環境が見つかりません。先に .\setup.ps1 を実行してください。"
+        Fail "仮想環境が見つかりません。先に setup.cmd を実行してください。"
     }
     if (-not (Test-Path ".env")) {
         Copy-Item ".env.example" ".env"
@@ -37,9 +35,9 @@ try {
     }
 
     Write-Host "Smart Ledger を起動します: http://localhost:$port  (終了は Ctrl+C)" -ForegroundColor Cyan
-    if ($PSScriptRoot -like "\\*") {
+    if ($projectRoot -like "\\*") {
         # \\wsl.localhost\... などネットワーク越しのフォルダでは .venv の読み込みが極端に遅くなる
-        Write-Host "注意: ネットワーク上のフォルダ($PSScriptRoot)から起動しています。ライブラリの読み込みに数分かかることがあります。Windows のローカルディスク(例: C:\Users\<名前>\smart-leger)に置くと数秒で起動します。" -ForegroundColor Yellow
+        Write-Host "注意: ネットワーク上のフォルダ($projectRoot)から起動しています。ライブラリの読み込みに数分かかることがあります。Windows のローカルディスク(例: C:\Users\<名前>\smart-leger)に置くと数秒で起動します。" -ForegroundColor Yellow
     }
     $env:PYTHONUTF8 = "1"
     # Flask/werkzeug は stderr にも出力するため、実行中は Stop にしない

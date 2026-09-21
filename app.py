@@ -1,7 +1,7 @@
 """Smart Ledger 起動スクリプト
 
 python app.py                 # http://localhost:5000
-python app.py --open-browser  # 起動後にブラウザを開く（start.ps1 が使用）
+python app.py --open-browser  # 起動後にブラウザを開く（start.cmd が使用）
 
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
 （Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。

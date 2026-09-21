@@ -1,18 +1,15 @@
-﻿# Smart Ledger セットアップスクリプト(Windows PowerShell 5.1 / PowerShell 7)
-#   使い方(どちらでも可):
-#     - エクスプローラーで setup.ps1 を右クリック → 「PowerShell で実行」
-#     - PowerShell を開いて  .\setup.ps1
-#   実行ポリシーで止まる場合:  powershell -ExecutionPolicy Bypass -File .\setup.ps1
-#   終了時に Enter 待ちをしない場合:  .\setup.ps1 -NoPause
+﻿# Smart Ledger セットアップ処理(root の setup.cmd から呼び出す内部スクリプト)
+#   Windows PowerShell 5.1 / PowerShell 7 対応
 #   実行内容は logs\setup_YYYYMMDD_HHMMSS.log に記録されます(失敗時はこのログを確認してください)
 param([switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
-Set-Location -Path $PSScriptRoot
+$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+Set-Location -LiteralPath $projectRoot
 
 # --- ログ(ウィンドウがすぐ閉じても原因を追えるように、出力をファイルにも残す) -----
 New-Item -ItemType Directory -Path "logs" -Force | Out-Null
-$logPath = Join-Path $PSScriptRoot ("logs\setup_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
+$logPath = Join-Path $projectRoot ("logs\setup_" + (Get-Date -Format "yyyyMMdd_HHmmss") + ".log")
 try { Start-Transcript -Path $logPath -Append | Out-Null } catch { Write-Host "ログを開始できませんでした: $($_.Exception.Message)" -ForegroundColor Yellow }
 
 function Finish([int]$code) {
@@ -33,7 +30,7 @@ function Fail([string]$message) {
 
 try {
     Write-Host "=== Smart Ledger セットアップ ===" -ForegroundColor Cyan
-    Write-Host "PowerShell $($PSVersionTable.PSVersion) / フォルダ: $PSScriptRoot"
+    Write-Host "PowerShell $($PSVersionTable.PSVersion) / フォルダ: $projectRoot"
 
     # --- Python 3.12+ を探す ---------------------------------------------------
     # Microsoft Store の python.exe スタブ(実体なし)や 3.11 以下は候補から外す
@@ -92,7 +89,7 @@ try {
         Write-Host "Python 3.12 以上が見つかりません。" -ForegroundColor Red
         Write-Host "  1. https://www.python.org/downloads/windows/ から Python 3.12 以上をインストール"
         Write-Host "  2. インストーラーで 'Add python.exe to PATH' にチェック"
-        Write-Host "  3. 新しい PowerShell ウィンドウを開いて setup.ps1 を再実行"
+        Write-Host "  3. setup.cmd を再実行"
         Write-Host "  (Microsoft Store の 'python' はスタブのため使えません。'py --list' で実体を確認できます)"
         Fail "Python 3.12 以上が必要です"
     }
@@ -109,7 +106,7 @@ try {
     } else {
         Write-Host "仮想環境 .venv は既に存在します。"
     }
-    $venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+    $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
     if (-not (Test-Path $venvPython)) { Fail "仮想環境の python.exe が見つかりません: $venvPython" }
 
     # --- 依存パッケージ -------------------------------------------------------
@@ -134,7 +131,7 @@ try {
     }
 
     Write-Host ""
-    Write-Host "セットアップ完了。 .\start.ps1 でアプリを起動できます。" -ForegroundColor Green
+    Write-Host "セットアップ完了。start.cmd でアプリを起動できます。" -ForegroundColor Green
     Finish 0
 } catch {
     Fail "予期しないエラー: $($_.Exception.Message)`n$($_.ScriptStackTrace)"

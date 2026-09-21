@@ -151,7 +151,7 @@ def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> 
 
 
 def test_annual_table_matrix_and_totals(categories: list[str]) -> None:
-    """年間表は月ごとのカテゴリ別金額を sort_order 順に並べ、月間総支出は明細金額を 1 回だけ数える
+    """年間表は返金も含めてカテゴリ別金額を並べ、月間総支出は明細金額を 1 回だけ数える
 
     Args:
         categories: 初期カテゴリ
@@ -162,6 +162,7 @@ def test_annual_table_matrix_and_totals(categories: list[str]) -> None:
             make_tx('a', date(2026, 1, 5), 1000, '外食'),
             make_tx('b', date(2026, 1, 20), 2000, '食費'),
             make_tx('c', date(2026, 12, 31), 3000, '食費'),
+            make_tx('refund', date(2026, 12, 15), -500, '食費'),
             make_tx('d', date(2025, 12, 31), 9999, '食費'),  # 前年は含まれない
             make_tx('e', date(2026, 6, 1), 500, ''),  # 未分類は末尾
             kyash,
@@ -174,13 +175,13 @@ def test_annual_table_matrix_and_totals(categories: list[str]) -> None:
     assert table.months[0] == '2026-01' and table.months[-1] == '2026-12'
     assert [r.category for r in table.rows] == ['食費', '外食', '交通', '未分類']
     by_cat = {r.category: r for r in table.rows}
-    assert by_cat['食費'].amounts == [2000, 0, 6000, 0, 0, 0, 0, 0, 0, 0, 0, 3000]
-    assert by_cat['食費'].total == 11000
+    assert by_cat['食費'].amounts == [2000, 0, 6000, 0, 0, 0, 0, 0, 0, 0, 0, 2500]
+    assert by_cat['食費'].total == 10500
     assert by_cat['交通'].amounts[2] == 4000
     assert 'その他' not in by_cat  # 内訳のある明細は自身のカテゴリでは数えない
-    assert table.monthly_totals == [3000, 0, 10000, 0, 0, 500, 0, 0, 0, 0, 0, 3000]
-    assert table.monthly_counts == [2, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1]
-    assert table.total == 16500 == sum(r.total for r in table.rows)
+    assert table.monthly_totals == [3000, 0, 10000, 0, 0, 500, 0, 0, 0, 0, 0, 2500]
+    assert table.monthly_counts == [2, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 2]
+    assert table.total == 16000 == sum(r.total for r in table.rows)
 
 
 def test_annual_table_empty_year_and_available_years(categories: list[str]) -> None:

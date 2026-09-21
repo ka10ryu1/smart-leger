@@ -57,7 +57,7 @@ def annual_xlsx(table: AnnualTable) -> bytes:
     for row in annual_table_rows(table):
         ws.append(row)
 
-    for cell in ws['A']:  # '=' 始まりのカテゴリ名を数式として保存しない
+    for cell in ws['A']:  # 旧バージョンの数式記号始まりを含め、カテゴリ列を数式として保存しない
         cell.data_type = 's'
 
     ws.freeze_panes = 'B2'
