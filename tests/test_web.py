@@ -545,13 +545,13 @@ def test_bank_csv_import_flow(client: FlaskClient, fixture_bank_csv_bytes: bytes
     html = upload(client, fixture_bank_csv_bytes, 'bank.csv')
     assert '5 件を取り込む' in html
     assert '<dt>口座</dt><dd>銀行口座</dd>' in html
-    assert '4 件<span class="hint">(住宅ローン・売電以外の行)</span>' in html
+    assert '4 件<span class="hint">(住宅ローン・売電収入以外の行)</span>' in html
     assert '地方税' not in html and '定額自動入金' not in html  # 対象外の行は一覧にも出さない
 
     body = import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
     assert '5 件を取り込みました' in body
     assert 'うち 2 件は収入として記録しました' in body
-    assert '要確認' not in body or '要確認 0 件' in body  # 許可リストで確定するので要確認にならない
+    assert '要確認 0 件' in body  # 許可リストで確定するので要確認にならない
 
     # 2026-09: 支出 70,000 x 2 = 140,000 / 収入 7,000 / 収支 -133,000
     html = client.get('/?month=2026-09').get_data(as_text=True)

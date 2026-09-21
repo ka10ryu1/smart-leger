@@ -221,3 +221,17 @@ def test_unknown_header_reports_both_markers() -> None:
     """どちらのプロファイルのヘッダーも無ければ、両方の目印を挙げて CsvParseError"""
     with pytest.raises(CsvParseError, match='ご利用年月日.*日付'):
         parse_statement_bytes('氏名,金額\r\nテスト,100\r\n'.encode())
+
+
+def test_row_keys_do_not_depend_on_file_order(fixture_bank_csv_bytes: bytes) -> None:
+    """同じ明細を新しい日付が先 / 古い日付が先のどちらの並びで出力した CSV でも row_key の集合は一致する
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture（新しい日付が先）
+    """
+    header, *body = fixture_bank_csv_bytes.decode('cp932').rstrip('\r\n').split('\r\n')
+    reversed_csv = '\r\n'.join([header, *reversed(body)]).encode('cp932')
+    newest_first = parse_statement_bytes(fixture_bank_csv_bytes)
+    oldest_first = parse_statement_bytes(reversed_csv)
+    assert {r.row_key for r in newest_first.rows} == {r.row_key for r in oldest_first.rows}
+    assert [r.usage_date for r in newest_first.rows] == [r.usage_date for r in oldest_first.rows]

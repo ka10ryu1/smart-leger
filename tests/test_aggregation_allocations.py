@@ -228,7 +228,7 @@ def test_income_is_excluded_from_spending(categories: list[str]) -> None:
     summary = monthly_summary(data, '2026-09')
     assert (summary.total, summary.income, summary.balance) == (3000, 7000, 4000)
     assert summary.prev_total == 1000 and summary.diff == 2000  # 前月比は支出どうしで比べる
-    assert summary.transaction_count == 2  # 件数は収入も数える
+    assert (summary.transaction_count, summary.income_count) == (1, 1)  # 総支出の件数に収入は混ぜない
     assert [c.category for c in summary.categories] == ['食費']
     assert [(c.category, c.amount) for c in summary.income_categories] == [('売電収入', 7000)]
     assert dict(monthly_trend(data, '2026-09', months=2)) == {'2026-08': 1000, '2026-09': 3000}
@@ -255,4 +255,22 @@ def test_annual_table_separates_income_rows(categories: list[str]) -> None:
     assert table.monthly_totals[1:3] == [5000, 5000] and table.total == 10000
     assert table.monthly_incomes[1:3] == [6000, 7000] and table.income_total == 13000
     assert table.monthly_balances[1:3] == [1000, 2000] and table.balance == 3000
-    assert table.monthly_counts[1:3] == [2, 2]  # 件数は支出・収入の両方を数える
+    assert table.monthly_counts[1:3] == [1, 1]  # 件数（月平均の分母）は支出だけを数える
+
+
+def test_income_only_previous_month_counts_as_no_data(categories: list[str]) -> None:
+    """前月に収入しか無い場合は「前月のデータなし」扱いで、0 円との比較にしない
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_ledger(
+        [
+            make_tx('a', date(2026, 8, 5), 7000, '売電収入', kind='income'),
+            make_tx('b', date(2026, 9, 10), 3000, '食費'),
+        ],
+        categories,
+    )
+    summary = monthly_summary(data, '2026-09')
+    assert summary.prev_total is None and summary.diff is None
+    assert (summary.total, summary.transaction_count, summary.income_count) == (3000, 1, 0)

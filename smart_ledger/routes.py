@@ -23,6 +23,7 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
 from .constants import (
+    BANK_CSV_TARGETS,
     CATEGORY_DESCRIPTIONS,
     FALLBACK_CATEGORY,
     KIND_LABELS,
@@ -197,6 +198,7 @@ def inject_globals() -> dict[str, object]:
         'jev_enabled': bool(config.typesafe_api_key),
         'excel_path': str(config.excel_path),
         'kind_labels': KIND_LABELS,
+        'bank_target_categories': [category for _, category in BANK_CSV_TARGETS],  # 取込画面の説明文に使う
     }
 
 
@@ -644,8 +646,8 @@ def import_commit() -> WerkzeugResponse:
         f'{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、'
         f'ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。'
     )
-    if result.income:
-        msg += f' うち {result.income} 件は収入として記録しました。'
+    if result.income_count:
+        msg += f' うち {result.income_count} 件は収入として記録しました。'
 
     if result.added_categories:
         msg += f' カテゴリ「{"」「".join(result.added_categories)}」を追加しました。'

@@ -42,6 +42,11 @@ class PreviewRow:
     kind: str = KIND_EXPENSE
     category_hint: str = ''  # CSV の許可リストで決まったカテゴリ（空なら分類器に任せる）
 
+    @property
+    def is_income(self) -> bool:
+        """収入の行か（kind が income）"""
+        return self.kind == KIND_INCOME
+
 
 @dataclass
 class ImportPreview:
@@ -53,7 +58,6 @@ class ImportPreview:
     card: str
     encoding: str
     header_line: int
-    profile: str
     already_imported: bool
     previous_import: dict | None
     rows: list[PreviewRow]
@@ -62,6 +66,7 @@ class ImportPreview:
     warnings: list[str] = field(default_factory=list)
     skipped_lines: int = 0
     excluded_lines: int = 0
+    profile: str = 'card'  # 旧バージョンが保存したプレビュー JSON には無いので既定値付き
 
     def to_json(self) -> str:
         """JSON 文字列にする"""
@@ -100,8 +105,8 @@ class ImportResult:
     jev_errors: int
     rule_matched: int
     months: list[str]
-    income: int = 0  # 取り込んだ明細のうち収入の件数
-    added_categories: list[str] = field(default_factory=list)
+    income_count: int = 0  # 取り込んだ明細のうち収入の件数
+    added_categories: list[str] = field(default_factory=list)  # 許可リストのカテゴリが無かったので足したもの
 
 
 class Importer:
@@ -247,8 +252,6 @@ class Importer:
                 '取り込める新規の明細がありません（プレビュー後に取り込まれたか、すでに取り込み済みの CSV です）。'
             )
 
-        # 許可リストが使うカテゴリ（住宅ローン・売電収入など）が古いファイルに無ければ先に足す
-        added_categories = ensure_categories(data, [r.category_hint for r in rows])
         categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
         import_id = new_id('imp')
         imported_at = now_iso()
@@ -257,6 +260,9 @@ class Importer:
         counts = dict.fromkeys(('imported', 'auto', 'review', 'errors', 'rules', 'income'), 0)
         counts['dup'] = len(preview.rows) - len(rows)
         months: set[str] = set()
+        hinted_categories: list[
+            str
+        ] = []  # 許可リストのカテゴリがそのまま採用された行のカテゴリ（順序を保って重複なし）
         for row in rows:
             usage_date = date.fromisoformat(row.usage_date)
             result = self.pipeline.classify(
@@ -280,13 +286,20 @@ class Importer:
             data.transactions.append(tx)
             months.add(tx.month)
             counts['imported'] += 1
-            counts['income'] += int(tx.kind == KIND_INCOME)
+            counts['income'] += int(tx.is_income)
             counts['rules'] += int(result.source == SOURCE_RULE)
             counts['errors'] += int(result.source == SOURCE_ERROR)
             if self.pipeline.is_auto_accepted(result):
                 counts['auto'] += 1
             else:
                 counts['review'] += 1
+
+            if row.category_hint and result.category == row.category_hint and result.category not in hinted_categories:
+                hinted_categories.append(result.category)
+
+        # 許可リストのカテゴリ（住宅ローン・売電収入など）が古いファイルの categories シートに無ければ足す。
+        # 加盟店ルールで別カテゴリに振られた行は対象にしない（ユーザーが改名・削除したカテゴリを復活させない）
+        added_categories = ensure_categories(data, hinted_categories)
 
         data.imports.append(
             ImportRecord(
@@ -319,7 +332,7 @@ class Importer:
             jev_errors=counts['errors'],
             rule_matched=counts['rules'],
             months=sorted(months),
-            income=counts['income'],
+            income_count=counts['income'],
             added_categories=added_categories,
         )
 

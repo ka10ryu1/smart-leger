@@ -147,10 +147,19 @@ def test_load_tolerates_missing_columns(tmp_path: Path) -> None:
             wb.create_sheet(name).append(list(columns))
 
     wb.save(path)
-    data = ExcelRepository(path, backup_dir=tmp_path / 'b').load()
+    old_repo = ExcelRepository(path, backup_dir=tmp_path / 'b')
+    data = old_repo.load()
     assert data.transactions[0].id == 'tx_old'
     assert data.transactions[0].row_key == '' and data.transactions[0].memo == ''
+    assert data.transactions[0].kind == 'expense' and not data.transactions[0].is_income  # kind 列が無ければ支出
     assert data.categories[0].category == '食費' and data.categories[0].description == ''
+
+    old_repo.save(data)  # 保存すると現行の列が揃い、kind は expense として書かれる
+    saved = load_workbook(path, read_only=True)
+    header = [c.value for c in next(saved['transactions'].iter_rows())]
+    saved.close()
+    assert header == list(Transaction.COLUMNS) and header[-1] == 'kind'
+    assert old_repo.load().transactions[0].kind == 'expense'
 
 
 def test_formula_like_text_is_saved_as_string(repo: ExcelRepository) -> None:

@@ -35,8 +35,9 @@ class MonthlySummary:
     diff: int | None
     diff_ratio: float | None
     categories: list[CategoryTotal] = field(default_factory=list)
-    transaction_count: int = 0
+    transaction_count: int = 0  # 支出の件数（総支出の内訳として表示する）
     income: int = 0
+    income_count: int = 0
     income_categories: list[CategoryTotal] = field(default_factory=list)
 
     @property
@@ -65,7 +66,7 @@ class AnnualTable:
     months: list[str]  # 'YYYY-MM' を 1〜12 月の順
     rows: list[AnnualRow]
     monthly_totals: list[int]
-    monthly_counts: list[int]
+    monthly_counts: list[int]  # 支出の件数（明細のある月の数え上げと月平均の分母に使う）
     total: int
     income_rows: list[AnnualRow] = field(default_factory=list)
     monthly_incomes: list[int] = field(default_factory=list)
@@ -206,10 +207,10 @@ def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
         month: 対象の 'YYYY-MM'
     """
     current = transactions_in_month(data.transactions, month)
-    previous = transactions_in_month(data.transactions, shift_month(month, -1))
     expenses, incomes = split_by_kind(current)
-    total = total_spending(current)
-    prev_total = total_spending(previous) if previous else None
+    prev_expenses, _ = split_by_kind(transactions_in_month(data.transactions, shift_month(month, -1)))
+    total = total_spending(expenses)
+    prev_total = total_spending(prev_expenses) if prev_expenses else None  # 前月が収入だけなら「前月のデータなし」
     diff: int | None = None
     diff_ratio: float | None = None
     if prev_total is not None:
@@ -225,8 +226,9 @@ def monthly_summary(data: LedgerData, month: str) -> MonthlySummary:
         diff=diff,
         diff_ratio=diff_ratio,
         categories=category_totals(expenses, data.allocations, names),
-        transaction_count=len(current),
-        income=total_income(current),
+        transaction_count=len(expenses),
+        income=total_income(incomes),
+        income_count=len(incomes),
         income_categories=category_totals(incomes, data.allocations, names),
     )
 
@@ -314,7 +316,7 @@ def annual_table(data: LedgerData, year: int) -> AnnualTable:
     months = [f'{year:04d}-{m:02d}' for m in range(1, 13)]
     in_year = [t for t in data.transactions if t.usage_date.year == year]  # 月ごとの走査を対象年だけに絞る
     expenses, incomes = split_by_kind(in_year)
-    monthly_counts = [len(transactions_in_month(in_year, month)) for month in months]
+    monthly_counts = [len(transactions_in_month(expenses, month)) for month in months]
     expense_amounts, monthly_totals = month_matrix(expenses, data.allocations, months)
     income_amounts, monthly_incomes = month_matrix(incomes, data.allocations, months)
     names = data.category_names()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -256,7 +257,7 @@ def test_bank_csv_commit_sets_kind_and_category_without_classifier(
 
     result = importer.commit(data, preview)
     assert stub.calls == []  # Jev には 1 件も問い合わせない
-    assert (result.imported, result.income, result.rule_matched, result.needs_review) == (5, 2, 5, 0)
+    assert (result.imported, result.income_count, result.rule_matched, result.needs_review) == (5, 2, 5, 0)
 
     loans = [t for t in data.transactions if t.category == '住宅ローン']
     solar = [t for t in data.transactions if t.category == '売電収入']
@@ -306,3 +307,51 @@ def test_bank_csv_duplicate_detection_ignores_added_period(
     preview = importer.preview(data, 'bank2.csv', '\r\n'.join([lines[0], added, *lines[1:]]).encode('cp932'))
     assert preview.new_count == 1 and preview.duplicate_count == 5
     assert importer.commit(data, preview).imported == 1
+
+
+def test_merchant_rule_beats_bank_target_and_does_not_revive_category(
+    tmp_path: Path, repo: ExcelRepository, fixture_bank_csv_bytes: bytes
+) -> None:
+    """売電の行にユーザーの加盟店ルールがあればそれを優先し、許可リストのカテゴリ「売電収入」は復活させない
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(StubClassifier({}), 0.85))
+    data = repo.load()
+    # ユーザーが「売電収入」を「売電」に付け替えて運用しているファイルを模す
+    data.categories = [c for c in data.categories if c.category != '売電収入']
+    data.categories.append(type(data.categories[0])('売電', 99))
+    data.merchant_rules.append(MerchantRule('振込*トウデンPG コウニユウ', '売電'))
+
+    result = importer.commit(data, importer.preview(data, 'bank.csv', fixture_bank_csv_bytes))
+    solar = [t for t in data.transactions if t.is_income]
+    assert [t.category for t in solar] == ['売電', '売電']
+    assert result.added_categories == []  # 住宅ローンは既にあり、売電収入は使われなかったので足さない
+    assert '売電収入' not in data.category_names()
+
+
+def test_load_preview_without_profile_field(tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes) -> None:
+    """旧バージョンが staging に残した profile 無しの JSON も復元できる（確定を 500 にしない）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 のカード fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(StubClassifier({}), 0.85))
+    preview = importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
+    path = importer.staging_path(preview.token)
+    assert path is not None
+    raw = json.loads(path.read_text(encoding='utf-8'))
+    del raw['profile'], raw['excluded_lines']
+    for row in raw['rows']:
+        del row['kind'], row['category_hint']
+
+    path.write_text(json.dumps(raw, ensure_ascii=False), encoding='utf-8')
+    restored = importer.load_preview(preview.token)
+    assert restored is not None
+    assert restored.profile == 'card' and restored.excluded_lines == 0
+    assert all(not r.is_income and r.category_hint == '' for r in restored.rows)
