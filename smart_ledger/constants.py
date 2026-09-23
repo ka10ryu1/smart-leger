@@ -121,4 +121,6 @@ EXCEL_COLUMN_WIDTHS: dict[str, int] = {
 LOG_CARD_NUMBER_PATTERN = re.compile(r'(?<!\d)\d(?:[ -]?\d){12,18}(?!\d)')  # 13〜19 桁（区切りは空白か -）
 LOG_BEARER_PATTERN = re.compile(r'(Bearer\s+)[A-Za-z0-9_\-\.]+', re.IGNORECASE)
 MONTH_PATTERN = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+# 明細一覧の確信度の絞り込み: 半角の 0〜1 で小数 2 桁まで（フォームの step=0.01 に合わせ、全角・指数表記・3 桁以上は弾く）
+CONFIDENCE_FILTER_PATTERN = re.compile(r'^(?:[01]|0?\.[0-9]{1,2}|1\.0{1,2})$')
 YEAR_PATTERN = re.compile(r'^\d{4}$')  # \d は isdecimal と同じ Unicode Nd なので全角数字も通る（int() できる）
