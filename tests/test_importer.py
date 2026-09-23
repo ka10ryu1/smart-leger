@@ -13,6 +13,7 @@ from smart_ledger.models import Allocation, ClassificationResult, MerchantRule
 from smart_ledger.services.classifier import ClassificationPipeline, NullClassifier
 from smart_ledger.services.excel_repository import ExcelRepository
 from smart_ledger.services.importer import Importer, ImportNotFoundError, summarize_import, undo_import
+from smart_ledger.services.manual_entries import ManualEntryInput, add_manual_transaction
 
 
 class StubClassifier:
@@ -359,3 +360,26 @@ def test_load_preview_without_profile_field(tmp_path: Path, repo: ExcelRepositor
     assert restored is not None
     assert restored.profile == 'card' and restored.excluded_lines == 0
     assert all(not r.is_income and r.category_hint == '' for r in restored.rows)
+
+
+def test_preview_warns_about_manual_transaction_with_same_date_and_amount(
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+) -> None:
+    """利用日・金額・収支が同じ手動明細がある新規行は警告する（重複扱いにはせず、収支が違えば警告しない）
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    data = repo.load()
+    add_manual_transaction(data, ManualEntryInput('2026-08-12', 'スーパー', '3240', '食費', 'expense', '現金'))
+    add_manual_transaction(data, ManualEntryInput('2026-08-10', '電気代', '7850', '食費', 'income', '現金'))
+    preview = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier('x'), 0.85)).preview(
+        data, 'a.csv', fixture_csv_bytes
+    )
+    assert preview.new_count == 10
+    assert [w for w in preview.warnings if '手動明細' in w] == [
+        '2026-08-12 サンプルスーパー ホンテン 3,240 円は、利用日・金額が同じ手動明細「スーパー」があります。'
+        '同じ支出なら二重計上になるので、取り込む前に手動明細を削除してください。'
+    ]
