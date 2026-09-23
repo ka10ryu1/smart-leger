@@ -131,7 +131,7 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 - セットアップ済み仮想環境の Python で Flask を直接起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます（通常起動では `uv run` の同期確認を挟みません）
 - 終了は PowerShell で `Ctrl+C`
 
-手動で起動する場合:
+手動で起動する場合（`\\wsl.localhost\...` などネットワーク上のフォルダでは `.venv` を `.venv-windows` に読み替える）:
 
 ```powershell
 .\.venv\Scripts\python.exe app.py --open-browser
