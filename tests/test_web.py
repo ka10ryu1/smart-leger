@@ -284,6 +284,24 @@ def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_byt
     assert '+10,000' in client.get('/transactions?kind=income').get_data(as_text=True)
 
 
+def test_update_category_once_and_errors(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """今回だけの変更は back に戻り、不明なカテゴリは編集画面に戻してエラー表示、存在しない明細は 404
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
+    tx_id = first_tx_id(client, 'SAMPLE')
+    response = client.post(f'/transactions/{tx_id}/category', data={'category': '外食', 'back': '/review'})
+    assert response.headers['Location'] == '/review'
+    assert 'カテゴリを「外食」に変更しました(今回だけ)。' in client.get('/review').get_data(as_text=True)
+    response = client.post(f'/transactions/{tx_id}/category', data={'category': 'typo', 'back': '/review'})
+    assert response.headers['Location'] == f'/transactions/{tx_id}/edit?back=/review'
+    assert '不明なカテゴリです: typo' in client.get(response.headers['Location']).get_data(as_text=True)
+    assert client.post('/transactions/nope/category', data={'category': '外食'}).status_code == 404
+
+
 def test_clear_allocations_requires_existing_transaction(client: FlaskClient) -> None:
     """存在しない明細 ID の内訳削除は成功表示にせず404にする
 

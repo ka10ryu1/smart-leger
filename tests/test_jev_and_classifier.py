@@ -13,6 +13,8 @@ from smart_ledger.models import LedgerData, MerchantRule, Transaction
 from smart_ledger.services.classifier import ClassificationPipeline, JevClassifier, NullClassifier
 from smart_ledger.services.jev_client import JevClient, JevError, build_request_body, parse_choice_response
 from smart_ledger.services.merchant_rules import (
+    CategoryChange,
+    apply_manual_category,
     match_rule,
     prepare_rules,
     preview_rule_targets,
@@ -405,6 +407,60 @@ def test_rule_targets_preserves_manual_edits() -> None:
     automatic = Transaction('auto', date(2026, 8, 1), 'A', 'サンプルストア', 100, classification_source='jev')
     manual = Transaction('manual', date(2026, 8, 2), 'B', 'サンプルカフェ', 200, classification_source='manual')
     assert rule_targets([automatic, manual], [rule], rule, 'none') == [automatic]
+
+
+def test_apply_manual_category_once_sets_manual_fields_only() -> None:
+    """今回だけの変更は明細を手動分類にし、収支は変えたときだけ結果に載せ、ルールは登録しない"""
+    tx = Transaction('t1', date(2026, 8, 1), 'A', 'サンプルストア', 100, category='食費', confidence=0.9)
+    data = LedgerData(transactions=[tx])
+    change = apply_manual_category(data, tx, '外食', kind='income', memo='m')
+    assert change == CategoryChange(changed_kind='income')
+    assert (tx.category, tx.confidence, tx.classification_source, tx.memo) == ('外食', None, 'manual', 'm')
+    assert tx.kind == 'income'
+    assert apply_manual_category(data, tx, '外食', kind='income').changed_kind == ''  # 同じ収支は変更扱いにしない
+    assert apply_manual_category(data, tx, '外食').changed_kind == '' and tx.kind == 'income'  # kind 省略は変えない
+    assert data.merchant_rules == []
+
+
+@pytest.mark.parametrize(
+    ('category', 'kind', 'error'), [('typo', '', '不明なカテゴリです'), ('外食', 'x', '不明な収支です')]
+)
+def test_apply_manual_category_rejects_unknown_values(category: str, kind: str, error: str) -> None:
+    """不明なカテゴリ・収支は明細を変えずに ValueError
+
+    Args:
+        category: 指定するカテゴリ
+        kind: 指定する収支
+        error: 期待するエラー文言
+    """
+    tx = Transaction('t1', date(2026, 8, 1), 'A', 'サンプルストア', 100, category='食費')
+    with pytest.raises(ValueError, match=error):
+        apply_manual_category(LedgerData(transactions=[tx]), tx, category, kind=kind, remember=True)
+
+    assert (tx.category, tx.classification_source) == ('食費', '')
+
+
+def test_apply_manual_category_remember_applies_rule_to_others() -> None:
+    """ルール登録すると既定パターンは加盟店キーになり、手動修正済み・同じカテゴリの明細を除いて反映される"""
+    tx = Transaction('t1', date(2026, 8, 1), 'A', 'テストデンリヨク 8ガツブン', 100)
+    auto = Transaction('t2', date(2026, 9, 1), 'B', 'テストデンリヨク 9ガツブン', 100, classification_source='jev')
+    same = Transaction('t3', date(2026, 10, 1), 'C', 'テストデンリヨク', 100, category='住居・光熱')
+    manual = Transaction('t4', date(2026, 11, 1), 'D', 'テストデンリヨク', 100, classification_source='manual')
+    data = LedgerData(transactions=[tx, auto, same, manual])
+    change = apply_manual_category(data, tx, '住居・光熱', remember=True)
+    assert change == CategoryChange(rule_pattern='テストデンリヨク', applied_others=1)
+    assert [(r.merchant_pattern, r.category) for r in data.merchant_rules] == [('テストデンリヨク', '住居・光熱')]
+    assert (auto.category, auto.classification_source, tx.classification_source) == ('住居・光熱', 'rule', 'manual')
+    assert (same.classification_source, manual.category) == ('', '')
+
+
+def test_apply_manual_category_reports_rule_not_matching_self() -> None:
+    """入力したパターンが編集中の明細に一致しなくてもルールは登録され、matches_self が False になる"""
+    tx = Transaction('t1', date(2026, 8, 1), 'A', 'サンプルカフェ', 100)
+    data = LedgerData(transactions=[tx])
+    change = apply_manual_category(data, tx, '外食', remember=True, rule_pattern='ゼンゼンチガウミセ')
+    assert change == CategoryChange(rule_pattern='ゼンゼンチガウミセ', matches_self=False)
+    assert [r.merchant_pattern for r in data.merchant_rules] == ['ゼンゼンチガウミセ']
 
 
 def test_match_rule_prefers_exact_over_key_match_regardless_of_order() -> None:

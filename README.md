@@ -329,7 +329,7 @@ smart-ledger/
 │  ├─ services/
 │  │  ├─ csv_parser.py        # ヘッダー検出・文字コード判定・row_key
 │  │  ├─ normalize.py         # 加盟店名正規化
-│  │  ├─ merchant_rules.py    # ルール検索・登録
+│  │  ├─ merchant_rules.py    # ルール検索・登録、明細編集のカテゴリ変更とルールの一括反映
 │  │  ├─ jev_client.py        # TypeSafe Jev API クライアント(httpx)
 │  │  ├─ classifier.py        # 分類パイプライン(rule → Jev → 閾値)
 │  │  ├─ importer.py          # プレビュー / 確定

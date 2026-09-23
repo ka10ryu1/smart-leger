@@ -5,10 +5,10 @@ from __future__ import annotations
 from flask import abort, flash, redirect, render_template, request, url_for
 from werkzeug.wrappers import Response as WerkzeugResponse
 
-from ..constants import KIND_LABELS, SOURCE_MANUAL, SOURCE_RULE
+from ..constants import KIND_LABELS
 from ..models import LedgerData
 from ..services.allocations import AllocationInput, replace_allocations, validate_allocations
-from ..services.merchant_rules import match_rule, preview_rule_targets, rule_targets, upsert_rule
+from ..services.merchant_rules import CategoryChange, apply_manual_category, match_rule, preview_rule_targets
 from ..services.normalize import merchant_key
 from .common import bp, load_data, safe_back, save_and_redirect, svc
 
@@ -97,56 +97,40 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     kind = request.form.get('kind', '')
     back = safe_back()
 
-    def mutate(data: LedgerData) -> tuple[int, str, bool, str]:
+    def mutate(data: LedgerData) -> CategoryChange:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
 
-        if category not in data.category_names():
-            raise ValueError(f'不明なカテゴリです: {category}')
+        return apply_manual_category(
+            data, tx, category, kind=kind, memo=memo, remember=scope == 'always', rule_pattern=rule_pattern
+        )
 
-        if kind and kind not in KIND_LABELS:
-            raise ValueError(f'不明な収支です: {kind}')
+    def message(change: CategoryChange) -> str:
+        if change.rule_pattern:
+            msg = f'カテゴリを「{category}」に変更し、ルール「{change.rule_pattern}」を登録しました。'
+            if change.applied_others:
+                msg += f' 一致する {change.applied_others} 件にも適用しました。'
+        else:
+            msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
 
-        changed_kind = kind if kind and kind != tx.kind else ''  # 収支を変えたときだけメッセージに出す
-        tx.kind = kind or tx.kind
-        tx.category = category
-        tx.confidence = None
-        tx.classification_source = SOURCE_MANUAL
-        tx.memo = memo
-        if scope != 'always':
-            return 0, '', True, changed_kind
+        if change.changed_kind:
+            msg += f' 収支を「{KIND_LABELS[change.changed_kind]}」に変更しました。'
 
-        rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
-        targets = [
-            o for o in rule_targets(data.transactions, data.merchant_rules, rule, tx.id) if o.category != category
-        ]
-        for other in targets:
-            other.category = category
-            other.confidence = None
-            other.classification_source = SOURCE_RULE
-
-        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None, changed_kind
+        return msg
 
     try:
-        applied_others, pattern, matches_self, changed_kind = svc().repo.update(mutate)
+        change = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
 
-    if scope == 'always':
-        msg = f'カテゴリを「{category}」に変更し、ルール「{pattern}」を登録しました。'
-        if applied_others:
-            msg += f' 一致する {applied_others} 件にも適用しました。'
-    else:
-        msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
-
-    if changed_kind:
-        msg += f' 収支を「{KIND_LABELS[changed_kind]}」に変更しました。'
-
-    flash(msg, 'success')
-    if not matches_self:
-        flash(f'ルール「{pattern}」はこの明細の加盟店名に一致しません。パターンを確認してください。', 'warning')
+    flash(message(change), 'success')
+    if not change.matches_self:
+        flash(
+            f'ルール「{change.rule_pattern}」はこの明細の加盟店名に一致しません。パターンを確認してください。',
+            'warning',
+        )
 
     return redirect(back)
 
