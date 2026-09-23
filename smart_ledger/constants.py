@@ -50,6 +50,10 @@ KIND_EXPENSE = 'expense'
 KIND_INCOME = 'income'
 KIND_LABELS: dict[str, str] = {KIND_EXPENSE: '支出', KIND_INCOME: '収入'}
 
+# ------------------------------------------------------------- import_id
+# 画面から手動で追加した明細の transactions.import_id（imports シートには載せず、取込の取り消しの対象にもならない）
+MANUAL_IMPORT_ID = 'manual'
+
 # ---------------------------------------------------- classification_source
 SOURCE_RULE = 'rule'
 SOURCE_JEV = 'jev'

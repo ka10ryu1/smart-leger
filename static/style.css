@@ -56,7 +56,7 @@ small { font-size: 0.75em; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.8rem; }
 .inline { display: inline; }
 
-select, input[type=text], input[type=search], input[type=number], input[type=file] { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-width: 100%; }
+select, input[type=text], input[type=search], input[type=number], input[type=date], input[type=file] { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-width: 100%; }
 label { font-size: 0.85rem; color: var(--muted); display: flex; flex-direction: column; gap: 0.25rem; }
 label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(--text); font-size: 0.9rem; }
 .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
@@ -67,6 +67,7 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .filter-pair { display: flex; gap: 0.4rem; }
 .filter-pair input { flex: 1 1 5em; min-width: 0; }
 
+.page-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .month-nav { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 1rem; }
 .month-select select { font-size: 1.05rem; font-weight: 600; }
 

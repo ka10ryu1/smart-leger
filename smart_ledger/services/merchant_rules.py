@@ -1,4 +1,4 @@
-"""加盟店ルール（merchant_rules シート）の検索と追加
+"""加盟店ルール（merchant_rules シート）の検索と追加、明細編集でのカテゴリ変更とルールの一括反映
 
 ルールはユーザーが「今後この加盟店はこのカテゴリ」と明示的に選んだときだけ追加する
 （Jev の分類結果や confidence が高いだけの明細を勝手にルール化しない）
@@ -7,8 +7,9 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
-from ..constants import SOURCE_MANUAL
+from ..constants import KIND_LABELS, SOURCE_MANUAL, SOURCE_RULE
 from ..models import LedgerData, MerchantRule, Transaction, now_iso
 from .normalize import merchant_key, normalize_merchant
 
@@ -154,6 +155,66 @@ def upsert_rule(data: LedgerData, merchant_pattern: str, category: str) -> Merch
     rule = MerchantRule(merchant_pattern=pattern, category=category)
     data.merchant_rules.append(rule)
     return rule
+
+
+@dataclass
+class CategoryChange:
+    """明細のカテゴリ変更の結果（ルールを登録しなかった場合 rule_pattern は空）"""
+
+    rule_pattern: str = ''
+    applied_others: int = 0  # ルールで一緒にカテゴリを変えた他の明細の件数
+    matches_self: bool = True  # 登録したルールが編集した明細自身に一致するか
+    changed_kind: str = ''  # 収支を変えたときだけ新しい kind（メッセージに出す）
+
+
+def apply_manual_category(
+    data: LedgerData,
+    tx: Transaction,
+    category: str,
+    *,
+    kind: str = '',
+    memo: str = '',
+    remember: bool = False,
+    rule_pattern: str = '',
+) -> CategoryChange:
+    """明細のカテゴリを手動分類として変更し、remember ならルールを登録して一致する他の明細にも反映する（保存は呼び出し側）
+
+    不明なカテゴリ・収支、空の加盟店パターンは ValueError。反映する他の明細（登録したルールが最優先で一致するものの
+    うち、手動修正済みと、すでに同じカテゴリのものは除く）は classification_source を rule にする
+
+    Args:
+        data: 対象の LedgerData
+        tx: 編集する明細（data に含まれるもの）
+        category: 新しいカテゴリ
+        kind: 新しい収支（空なら変えない）
+        memo: 新しいメモ
+        remember: ルールを登録して他の明細にも反映するか
+        rule_pattern: ルールの加盟店パターン（空なら請求月などを除いた加盟店キー）
+    """
+    if category not in data.category_names():
+        raise ValueError(f'不明なカテゴリです: {category}')
+
+    if kind and kind not in KIND_LABELS:
+        raise ValueError(f'不明な収支です: {kind}')
+
+    changed_kind = kind if kind and kind != tx.kind else ''
+    tx.kind = kind or tx.kind
+    tx.category = category
+    tx.confidence = None
+    tx.classification_source = SOURCE_MANUAL
+    tx.memo = memo
+    if not remember:
+        return CategoryChange(changed_kind=changed_kind)
+
+    rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
+    targets = [o for o in rule_targets(data.transactions, data.merchant_rules, rule, tx.id) if o.category != category]
+    for other in targets:
+        other.category = category
+        other.confidence = None
+        other.classification_source = SOURCE_RULE
+
+    matches_self = match_rule([rule], tx.merchant_normalized) is not None
+    return CategoryChange(rule.merchant_pattern, len(targets), matches_self, changed_kind)
 
 
 def delete_rule(data: LedgerData, merchant_pattern: str) -> bool:

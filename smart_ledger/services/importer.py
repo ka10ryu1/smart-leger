@@ -156,6 +156,15 @@ class Importer:
                 )
             )
 
+        # 手動明細は row_key が空で重複判定に掛からないため、利用日・金額・収支が同じ新規行を警告だけする
+        # （手動で打った加盟店名・カード名は CSV と揃わないので照合に使わない）
+        manual = {(t.usage_date.isoformat(), t.amount, t.kind): t for t in data.transactions if t.is_manual_entry}
+        warnings = parsed.warnings + [
+            f'{r.usage_date} {r.merchant_normalized} {r.amount:,} 円は、利用日・金額が同じ手動明細「{m.merchant_normalized}」'
+            'があります。同じ支出なら二重計上になるので、取り込む前に手動明細を削除してください。'
+            for r in rows
+            if not r.duplicate and (m := manual.get((r.usage_date, r.amount, r.kind)))
+        ]
         new_count = sum(1 for r in rows if not r.duplicate)
         preview = ImportPreview(
             token=secrets.token_urlsafe(16),
@@ -170,7 +179,7 @@ class Importer:
             rows=rows,
             new_count=new_count,
             duplicate_count=len(rows) - new_count,
-            warnings=parsed.warnings,
+            warnings=warnings,
             skipped_lines=parsed.skipped_lines,
             excluded_lines=parsed.excluded_lines,
         )
