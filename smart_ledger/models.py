@@ -391,6 +391,14 @@ class LedgerData:
         """
         return [a for a in self.allocations if a.transaction_id == tx_id]
 
+    def allocations_by_transaction(self) -> dict[str, list[Allocation]]:
+        """明細 ID → 内訳（保存順）の dict を返す（内訳の無い明細はキーに含まない）"""
+        grouped: dict[str, list[Allocation]] = {}
+        for a in self.allocations:
+            grouped.setdefault(a.transaction_id, []).append(a)
+
+        return grouped
+
     def existing_row_keys(self) -> set[tuple[str, str]]:
         """取込済み明細の (row_key, card) 集合を返す（同じカードの明細どうしで重複を判定する）"""
         return {(tx.row_key, tx.card) for tx in self.transactions if tx.row_key}

@@ -306,7 +306,7 @@ def dashboard() -> str:
         trend=monthly_trend(data, months=6, end_month=month),
         review_count=len(needs_review(data)),
         months=available_months(data.transactions),
-        alloc_ids={a.transaction_id for a in data.allocations},
+        allocs=data.allocations_by_transaction(),
         has_data=bool(data.transactions),
     )
 
@@ -348,7 +348,7 @@ def annual_export(fmt: str) -> Response:
 
 @bp.route('/transactions')
 def transactions() -> str:
-    """明細一覧（月・収支・カテゴリ・分類元・加盟店名で絞り込み）"""
+    """明細一覧（月・収支・カテゴリ・分類元・加盟店名で絞り込み。カテゴリは内訳のカテゴリにも一致させる）"""
     data = load_data()
     month = request.args.get('month', '').strip()
     if month and not MONTH_PATTERN.match(month):
@@ -361,6 +361,7 @@ def transactions() -> str:
     if kind not in KIND_LABELS:
         kind = ''
 
+    allocs = data.allocations_by_transaction()
     txs = list(data.transactions)
     if month:
         txs = transactions_in_month(txs, month)
@@ -369,7 +370,13 @@ def transactions() -> str:
         txs = [t for t in txs if t.kind == kind]
 
     if category:
-        txs = [t for t in txs if (t.category or UNCLASSIFIED_LABEL) == category]
+        # 内訳のカテゴリはカテゴリ別集計（aggregation.category_rows）と同じく空なら その他 とみなす
+        txs = [
+            t
+            for t in txs
+            if (t.category or UNCLASSIFIED_LABEL) == category
+            or any((a.category or FALLBACK_CATEGORY) == category for a in allocs.get(t.id, []))
+        ]
 
     if source:
         txs = [t for t in txs if t.classification_source == source]
@@ -397,7 +404,7 @@ def transactions() -> str:
             'source': source,
             'kind': kind,
         },
-        alloc_ids={a.transaction_id for a in data.allocations},
+        allocs=allocs,
     )
 
 

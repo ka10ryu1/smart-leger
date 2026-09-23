@@ -121,6 +121,6 @@
     <h2>最近の明細</h2>
     <a class="btn btn-sm" href="{{ url_for('ledger.transactions', month=month) }}">すべて見る</a>
   </div>
-  {{ tx_list(recent, alloc_ids) }}
+  {{ tx_list(recent, allocs) }}
 </section>
 {% endblock %}
