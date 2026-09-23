@@ -609,3 +609,24 @@ def test_income_is_not_counted_as_spending_across_cards(
     html = client.get('/?month=2026-08').get_data(as_text=True)
     assert '114,590' in html and '+6,500' in html
     assert '-108,090' in html  # 収支
+
+
+def test_dashboard_category_links_filter_by_kind(client: FlaskClient, fixture_bank_csv_bytes: bytes) -> None:
+    """同じカテゴリが支出と収入の両方にある月も、ダッシュボードのカテゴリのリンク先はそれぞれの明細だけに絞る
+
+    Args:
+        client: テストクライアント
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+    tx_id = first_tx_id(client, '約定返済&month=2026-09')  # 2026-09 の住宅ローン 70,000 x 2 のうち 1 件を収入にする
+    client.post(f'/transactions/{tx_id}/category', data={'category': '住宅ローン', 'kind': 'income'})
+
+    html = client.get('/?month=2026-09').get_data(as_text=True)
+    loan = '%E4%BD%8F%E5%AE%85%E3%83%AD%E3%83%BC%E3%83%B3'
+    expense_path = f'/transactions?month=2026-09&category={loan}&kind=expense'
+    income_path = f'/transactions?month=2026-09&category={loan}&kind=income'
+    assert f'href="{expense_path.replace("&", "&amp;")}"' in html
+    assert f'href="{income_path.replace("&", "&amp;")}"' in html
+    assert '1 件 / 支出 <strong>70,000 円</strong></p>' in client.get(expense_path).get_data(as_text=True)
+    assert '収入 <strong class="income">+70,000 円</strong>' in client.get(income_path).get_data(as_text=True)

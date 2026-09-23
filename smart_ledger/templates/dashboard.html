@@ -62,7 +62,7 @@
   <ul class="cat-bars">
     {% for c in summary.categories %}
     <li>
-      <a href="{{ url_for('ledger.transactions', month=month, category=c.category) }}">
+      <a href="{{ url_for('ledger.transactions', month=month, category=c.category, kind='expense') }}">
         <div class="cat-row">
           <span class="cat-name">{{ c.category }}</span>
           <span class="cat-amount">{{ c.amount|yen }} 円</span>
@@ -85,7 +85,7 @@
   <ul class="cat-bars">
     {% for c in summary.income_categories %}
     <li>
-      <a href="{{ url_for('ledger.transactions', month=month, category=c.category) }}">
+      <a href="{{ url_for('ledger.transactions', month=month, category=c.category, kind='income') }}">
         <div class="cat-row">
           <span class="cat-name">{{ c.category }}</span>
           <span class="cat-amount income">+{{ c.amount|yen }} 円</span>
