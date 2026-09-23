@@ -2,7 +2,10 @@
 {% from "_tx_list.html" import tx_list with context %}
 {% block title %}明細一覧{% endblock %}
 {% block content %}
-<h1>明細一覧</h1>
+<div class="page-head">
+  <h1>明細一覧</h1>
+  <a class="btn btn-primary" href="{{ url_for('ledger.new_transaction', back=request.full_path) }}">手動で追加</a>
+</div>
 <form method="get" class="filters card">
   <label>月
     <select name="month">

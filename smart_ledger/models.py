@@ -17,6 +17,7 @@ from .constants import (
     DEFAULT_CATEGORIES,
     KIND_EXPENSE,
     KIND_INCOME,
+    MANUAL_IMPORT_ID,
     SOURCE_ERROR,
     SOURCE_JEV,
 )
@@ -143,6 +144,11 @@ class Transaction:
     def is_income(self) -> bool:
         """収入の明細か（kind が income）"""
         return self.kind == KIND_INCOME
+
+    @property
+    def is_manual_entry(self) -> bool:
+        """画面から手動で追加した明細か（import_id が manual。CSV 取込の明細ではない）"""
+        return self.import_id == MANUAL_IMPORT_ID
 
     @property
     def month(self) -> str:

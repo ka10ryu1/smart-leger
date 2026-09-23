@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import date
 
 import pytest
@@ -60,7 +61,12 @@ def first_tx_id(client: FlaskClient, query: str) -> str:
         client: テストクライアント
         query: 明細一覧の検索語
     """
-    return client.get(f'/transactions?q={query}').get_data(as_text=True).split('/transactions/')[1].split('/edit')[0]
+    html = client.get(f'/transactions?q={query}').get_data(as_text=True)
+    match = re.search(r'/transactions/([^/"?]+)/edit', html)  # 「手動で追加」の /transactions/new は編集リンクではない
+    if match is None:
+        raise AssertionError(f'明細が見つかりません: {query}')
+
+    return match.group(1)
 
 
 def test_pages_render(client: FlaskClient) -> None:
@@ -826,3 +832,108 @@ def test_confidence_filter_echoes_normalized_value(client: FlaskClient) -> None:
 
     assert listed_ids(client, 'conf=.8&conf_op=gte') == listed_ids(client, 'conf=0.80&conf_op=gte')
     assert 'name="conf" value=""' in client.get('/transactions?conf=0.805').get_data(as_text=True)
+
+
+def manual_form(**overrides: str) -> dict[str, str]:
+    """手動明細の追加フォームの値（既定は 2026-08-10 の現金の食費 1,200 円）を返す
+
+    Args:
+        overrides: 上書きするフォーム項目
+    """
+    form = {
+        'usage_date': '2026-08-10',
+        'merchant': 'ヤオヤ',
+        'amount': '1200',
+        'category': '食費',
+        'kind': 'expense',
+        'card': '現金',
+        'memo': '野菜',
+    }
+    form.update(overrides)
+    return form
+
+
+def test_manual_transaction_add_flow(client: FlaskClient) -> None:
+    """明細一覧の「手動で追加」から登録すると、その月の一覧・ダッシュボードの集計に出て、編集画面に削除ボタンが出る
+
+    Args:
+        client: テストクライアント
+    """
+    listing = client.get('/transactions').get_data(as_text=True)
+    assert 'href="/transactions/new?back=' in listing and '手動で追加' in listing
+
+    form_html = client.get('/transactions/new').get_data(as_text=True)
+    assert f'name="usage_date" value="{date.today().isoformat()}"' in form_html
+    assert 'name="card" value="現金"' in form_html
+    assert 'data-submit-once>' in form_html  # app.js が送信ボタンを無効化して二重登録を防ぐ
+
+    response = client.post('/transactions/new', data=manual_form())
+    assert response.status_code == 302 and response.headers['Location'].endswith('/transactions?month=2026-08')
+    body = client.get(response.headers['Location']).get_data(as_text=True)
+    assert '明細「ヤオヤ」(1,200 円)を手動で追加しました' in body
+    assert '1 件 / 支出 <strong>1,200 円</strong>' in body
+    assert '<span class="badge src src-manual">手動</span>' in body
+
+    data = client.application.extensions['smart_ledger'].repo.load()
+    tx = data.transactions[0]
+    assert (tx.import_id, tx.row_key, tx.classification_source) == ('manual', '', 'manual')
+    assert data.imports == []
+    assert '<div class="stat-value">1,200<small> 円</small></div>' in client.get('/?month=2026-08').get_data(
+        as_text=True
+    )
+
+    edit_html = client.get(f'/transactions/{tx.id}/edit').get_data(as_text=True)
+    assert 'この明細を削除' in edit_html and f'/transactions/{tx.id}/delete' in edit_html
+    assert '手動で追加' in edit_html
+
+
+def test_manual_transaction_invalid_input_keeps_values(client: FlaskClient) -> None:
+    """入力が不正なら保存せず、入力値を残したままエラーを表示する
+
+    Args:
+        client: テストクライアント
+    """
+    response = client.post('/transactions/new', data=manual_form(amount='abc', merchant='ハナヤ'))
+    html = response.get_data(as_text=True)
+    assert response.status_code == 400
+    assert '金額は整数で入力してください' in html
+    assert 'name="merchant" value="ハナヤ"' in html and '<option value="食費" selected>' in html
+    assert client.application.extensions['smart_ledger'].repo.load().transactions == []
+
+
+def test_manual_transaction_delete_flow(client: FlaskClient) -> None:
+    """手動明細は内訳ごと削除でき、削除後は戻り先へ移る
+
+    Args:
+        client: テストクライアント
+    """
+    repo = client.application.extensions['smart_ledger'].repo
+    client.post('/transactions/new', data=manual_form())
+    tx_id = repo.load().transactions[0].id
+    repo.update(lambda data: data.allocations.append(Allocation(tx_id, '食費', 1200)))
+
+    response = client.post(f'/transactions/{tx_id}/delete', data={'back': '/transactions?month=2026-08'})
+    assert response.status_code == 302 and response.headers['Location'] == '/transactions?month=2026-08'
+    body = client.get(response.headers['Location']).get_data(as_text=True)
+    assert '明細「ヤオヤ」を削除しました。 内訳 1 件も削除しました。' in body
+    data = repo.load()
+    assert data.transactions == [] and data.allocations == []
+    assert client.post(f'/transactions/{tx_id}/delete').status_code == 404
+
+
+def test_imported_transaction_cannot_be_deleted(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """CSV から取り込んだ明細は編集画面に削除ボタンを出さず、直接 POST しても削除しない
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
+    repo = client.application.extensions['smart_ledger'].repo
+    before = len(repo.load().transactions)
+    tx_id = first_tx_id(client, 'サンプルスーパー')
+    assert 'この明細を削除' not in client.get(f'/transactions/{tx_id}/edit').get_data(as_text=True)
+
+    body = client.post(f'/transactions/{tx_id}/delete', follow_redirects=True).get_data(as_text=True)
+    assert 'CSV から取り込んだ明細は削除できません' in body
+    assert len(repo.load().transactions) == before

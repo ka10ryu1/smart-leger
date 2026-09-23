@@ -10,6 +10,7 @@
     <dt>加盟店</dt><dd>{{ tx.merchant_normalized }}<br><small class="muted">元データ: {{ tx.merchant_raw }}</small></dd>
     <dt>金額</dt><dd class="big {{ 'income' if tx.is_income }}">{{ '+' if tx.is_income }}{{ tx.amount|yen }} 円{% if tx.is_income %}<span class="badge income">収入</span>{% endif %}</dd>
     <dt>カード / 口座</dt><dd>{{ tx.card or '-' }}</dd>
+    {% if tx.is_manual_entry %}<dt>登録</dt><dd>手動で追加 <small class="muted">{{ tx.imported_at }}</small></dd>{% endif %}
     <dt>現在のカテゴリ</dt><dd><span class="badge cat">{{ tx.category or '未分類' }}</span> <span class="badge src src-{{ tx.classification_source }}">{{ tx.classification_source|source_label }}{% if tx.confidence is not none %} {{ tx.confidence|conf }}{% endif %}</span></dd>
     {% if rule %}<dt>適用ルール</dt><dd>「{{ rule.merchant_pattern }}」→ {{ rule.category }}</dd>{% endif %}
   </dl>
@@ -78,4 +79,15 @@
   </form>
   {% endif %}
 </section>
+
+{% if tx.is_manual_entry %}
+<section class="card">
+  <h2>この明細を削除</h2>
+  <p class="hint">手動で追加した明細を削除します。内訳がある場合は一緒に削除します。</p>
+  <form method="post" action="{{ url_for('ledger.delete_transaction', tx_id=tx.id) }}" class="inline" data-confirm="この明細を削除しますか?">
+    <input type="hidden" name="back" value="{{ back }}">
+    <button class="btn btn-danger" type="submit">この明細を削除</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}

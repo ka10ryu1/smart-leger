@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}手動で追加{% endblock %}
+{% block content %}
+<p><a class="back" href="{{ back }}">← 戻る</a></p>
+<h1>明細を手動で追加</h1>
+<p class="hint">現金での支出や、CSV を取り込んでいないカードの支出を登録します。集計・要確認・ルール登録は取り込んだ明細と同じ扱いです。手動で追加した明細は取込の取り消しの対象外で、明細編集の「この明細を削除」で削除します。</p>
+
+<section class="card">
+  <form method="post" action="{{ url_for('ledger.new_transaction') }}" class="stack" data-submit-once>
+    <input type="hidden" name="back" value="{{ back }}">
+    <label>利用日
+      <input type="date" name="usage_date" value="{{ form.usage_date }}" required>
+    </label>
+    <label>加盟店・内容
+      <input type="text" name="merchant" value="{{ form.merchant }}" required placeholder="例: 八百屋">
+    </label>
+    <label>金額(円)
+      <input type="number" name="amount" value="{{ form.amount }}" step="1" inputmode="numeric" required placeholder="例: 1200">
+      <small class="muted">収入も正の金額で入力し、収支で「収入」を選びます。返金はマイナスの支出として入力します。</small>
+    </label>
+    <label>カテゴリ
+      <select name="category" required>
+        <option value="">選択してください</option>
+        {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == form.category }}>{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>収支
+      <select name="kind">
+        {% for value, label in kind_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == form.kind }}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>カード / 口座
+      <input type="text" name="card" value="{{ form.card }}" placeholder="例: 現金">
+    </label>
+    <label>メモ
+      <input type="text" name="memo" value="{{ form.memo }}" placeholder="任意">
+    </label>
+    <button class="btn btn-primary" type="submit">追加</button>
+  </form>
+</section>
+{% endblock %}
