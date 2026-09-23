@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
-from ..constants import KIND_EXPENSE, KIND_INCOME, SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
+from ..constants import BANK_CSV_TARGETS, KIND_EXPENSE, KIND_INCOME, SOURCE_ERROR, SOURCE_MANUAL, SOURCE_RULE
 from ..models import ImportRecord, LedgerData, Transaction, new_id, now_iso
 from .categories import ensure_categories
 from .classifier import ClassificationPipeline
@@ -254,7 +254,10 @@ class Importer:
                 '取り込める新規の明細がありません（プレビュー後に取り込まれたか、すでに取り込み済みの CSV です）。'
             )
 
-        categories = data.category_criteria()  # 名前 → 説明（categories シートの description を Jev に渡す）
+        # 名前 → 説明（categories シートの description を Jev に渡す）。許可リストのカテゴリ（住宅ローン・売電収入）は
+        # 銀行明細にしか付かず、銀行明細は Jev に問い合わせないので、カード明細の選択肢から外す
+        bank_only = {category for _, category in BANK_CSV_TARGETS}
+        categories = {name: desc for name, desc in data.category_criteria().items() if name not in bank_only}
         import_id = new_id('imp')
         imported_at = now_iso()
         prepared_rules = prepare_rules(data.merchant_rules)

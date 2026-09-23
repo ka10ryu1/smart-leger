@@ -25,6 +25,7 @@ class StubClassifier:
         """
         self.mapping = mapping
         self.calls: list[str] = []
+        self.categories: dict[str, str] = {}
 
     def classify(
         self, merchant_normalized: str, amount: int, usage_date: date, categories: dict[str, str]
@@ -35,9 +36,10 @@ class StubClassifier:
             merchant_normalized: 正規化済み加盟店名
             amount: 金額（未使用）
             usage_date: 利用日（未使用）
-            categories: カテゴリ（未使用）
+            categories: 選択肢のカテゴリ（最後に渡されたものを記録する）
         """
         self.calls.append(merchant_normalized)
+        self.categories = categories
         cat, confidence = self.mapping.get(merchant_normalized, ('その他', 0.3))
         return ClassificationResult(category=cat, confidence=confidence, source='jev')
 
@@ -67,6 +69,8 @@ def test_preview_and_commit_then_duplicate_detection(
     assert result.needs_review == 9
     assert sorted(result.months) == ['2026-08', '2026-09']
     assert len(set(stub.calls)) == len(stub.calls)
+    assert '住居・光熱' in stub.categories
+    assert not {'住宅ローン', '売電収入'} & set(stub.categories)  # 銀行明細専用のカテゴリはカードの選択肢に出さない
 
     data = repo.load()
     preview2 = importer.preview(data, 'a.csv', fixture_csv_bytes)
