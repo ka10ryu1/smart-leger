@@ -270,8 +270,8 @@ def available_years(transactions: list[Transaction]) -> list[int]:
 
 def month_matrix(
     transactions: list[Transaction], allocations: list[Allocation], months: list[str]
-) -> tuple[dict[str, list[int]], list[int]]:
-    """カテゴリ × 月の金額表と、月ごとの明細金額合計を作る
+) -> tuple[dict[str, list[int]], list[int], list[int]]:
+    """カテゴリ × 月の金額表と、月ごとの明細金額合計・明細件数を作る
 
     Args:
         transactions: 集計する明細（支出だけ・収入だけのどちらかを渡す）
@@ -279,17 +279,19 @@ def month_matrix(
         months: 'YYYY-MM' を月順に並べたもの
 
     Returns:
-        (カテゴリ名 → 月別金額のリスト, 月別の明細金額合計)
+        (カテゴリ名 → 月別金額のリスト, 月別の明細金額合計, 月別の明細件数)
     """
     amounts: dict[str, list[int]] = {}
     totals: list[int] = []
+    counts: list[int] = []
     for idx, month in enumerate(months):
         txs = transactions_in_month(transactions, month)
         totals.append(int(sum(t.amount for t in txs)))
+        counts.append(len(txs))
         for _, category, amount in category_rows(txs, allocations):
             amounts.setdefault(category, [0] * len(months))[idx] += amount
 
-    return amounts, totals
+    return amounts, totals, counts
 
 
 def annual_rows(amounts: dict[str, list[int]], category_order: list[str]) -> list[AnnualRow]:
@@ -308,7 +310,7 @@ def annual_rows(amounts: dict[str, list[int]], category_order: list[str]) -> lis
 def annual_table(data: LedgerData, year: int) -> AnnualTable:
     """カテゴリ × 月の年間表を作る（その年に明細か内訳があるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
 
-    支出と収入は別の表にする（同じカテゴリ名が両方に出ることはない想定だが、混ぜて合計はしない）
+    支出と収入は別の表にする（加盟店ルールで同じカテゴリ名が両方に出ることもあるが、混ぜて合計はしない）
 
     Args:
         data: 全データ
@@ -317,9 +319,8 @@ def annual_table(data: LedgerData, year: int) -> AnnualTable:
     months = [f'{year:04d}-{m:02d}' for m in range(1, 13)]
     in_year = [t for t in data.transactions if t.usage_date.year == year]  # 月ごとの走査を対象年だけに絞る
     expenses, incomes = split_by_kind(in_year)
-    monthly_counts = [len(transactions_in_month(expenses, month)) for month in months]
-    expense_amounts, monthly_totals = month_matrix(expenses, data.allocations, months)
-    income_amounts, monthly_incomes = month_matrix(incomes, data.allocations, months)
+    expense_amounts, monthly_totals, monthly_counts = month_matrix(expenses, data.allocations, months)
+    income_amounts, monthly_incomes, _ = month_matrix(incomes, data.allocations, months)
     names = data.category_names()
     return AnnualTable(
         year=year,

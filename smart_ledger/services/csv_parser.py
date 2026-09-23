@@ -188,31 +188,16 @@ def search_header_index(lines: list[list[str]], header_marker: str) -> int | Non
     return None
 
 
-def find_header_index(lines: list[list[str]], header_marker: str = CSV_HEADER_MARKER) -> int:
-    """明細ヘッダー行の index を返す（見つからなければ CsvParseError）
+def select_profile(lines: list[list[str]]) -> tuple[CsvProfile, int]:
+    """ヘッダー行の目印から CSV のプロファイルを選ぶ（csv_profiles() の順に試す）
 
     Args:
         lines: csv.reader で読んだ全行
-        header_marker: ヘッダー行の先頭セルの文字列
-    """
-    idx = search_header_index(lines, header_marker)
-    if idx is None:
-        raise CsvParseError(f'明細ヘッダー行(「{header_marker}」で始まる行)が見つかりませんでした。')
-
-    return idx
-
-
-def select_profile(lines: list[list[str]], profiles: tuple[CsvProfile, ...] | None = None) -> tuple[CsvProfile, int]:
-    """ヘッダー行の目印から CSV のプロファイルを選ぶ
-
-    Args:
-        lines: csv.reader で読んだ全行
-        profiles: 試すプロファイル（既定は csv_profiles()）
 
     Returns:
         (選ばれたプロファイル, 明細ヘッダー行の index)
     """
-    candidates = profiles if profiles is not None else csv_profiles()
+    candidates = csv_profiles()
     for profile in candidates:
         idx = search_header_index(lines, profile.header_marker)
         if idx is not None:
@@ -256,7 +241,7 @@ def resolve_columns(header: list[str], profile: CsvProfile) -> ColumnIndexes:
     date_col = find_column(header, profile.date_columns)
     description_col = find_column(header, profile.description_columns)
     amount_col = find_column(header, profile.amount_columns)
-    income_col = find_column(header, profile.income_columns) if profile.income_columns else None
+    income_col = find_column(header, profile.income_columns)
     if date_col is None or description_col is None or (amount_col is None and income_col is None):
         raise CsvParseError(
             '明細ヘッダーに必要な列(利用日・利用先・利用額)が見つかりませんでした: ' + ', '.join(header)
@@ -266,7 +251,7 @@ def resolve_columns(header: list[str], profile: CsvProfile) -> ColumnIndexes:
         date=date_col,
         description=description_col,
         amount=amount_col,
-        refund=find_column(header, profile.refund_columns) if profile.refund_columns else None,
+        refund=find_column(header, profile.refund_columns),
         income=income_col,
     )
 
@@ -338,10 +323,10 @@ def read_amount(fields_: list[str], columns: ColumnIndexes) -> tuple[int, str] |
         (金額, kind)。出金・利用額は支出、入金は収入、払戻額は負の支出として返す
     """
     amount = parse_amount(cell(fields_, columns.amount))
-    if amount is not None:
+    income = parse_amount(cell(fields_, columns.income))
+    if amount is not None and not (amount == 0 and income):  # 出金欄が「0」の入金行は入金として読む
         return amount, KIND_EXPENSE
 
-    income = parse_amount(cell(fields_, columns.income))
     if income is not None:
         return income, KIND_INCOME
 

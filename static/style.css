@@ -107,9 +107,8 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .badge.src-manual { background: #fdf4ff; color: #6b21a8; }
 .badge.src-error { background: #fef2f2; color: #991b1b; }
 .badge.dup { background: #fef3c7; color: #92400e; }
-.badge.new { background: #ecfdf5; color: #065f46; }
-.badge.income { background: #ecfdf5; color: #065f46; margin-right: 0.25rem; }
-.badge.skip { background: #f3f4f6; color: #6b7280; }
+.badge.new, .badge.income { background: #ecfdf5; color: #065f46; }
+.badge.income { margin-right: 0.25rem; }
 .memo { display: block; font-size: 0.75rem; color: var(--muted); }
 
 /* 明細: PC はテーブル、スマホはカード */

@@ -100,22 +100,15 @@ def ensure_categories(data: LedgerData, names: list[str]) -> list[str]:
 
     Args:
         data: 対象の LedgerData
-        names: 必要なカテゴリ名（重複・空文字は無視する）
+        names: 必要なカテゴリ名（重複・空文字は無視する。登録できない名前なら add_category の CategoryError がそのまま出る）
 
     Returns:
         実際に追加したカテゴリ名（追加が無ければ空リスト）
     """
-    added: list[str] = []
-    for name in names:
-        if not name:
-            continue
-
-        try:
-            add_category(data, name, CATEGORY_DESCRIPTIONS.get(name, ''))
-        except CategoryError:  # 既に存在する（または旧規則で登録できない名前）なら何もしない
-            continue
-
-        added.append(name)
+    existing = {normalize_merchant(c.category) for c in data.categories}  # add_category の重複判定と同じ比較
+    added = [name for name in dict.fromkeys(map(normalize_merchant, names)) if name and name not in existing]
+    for name in added:
+        add_category(data, name, CATEGORY_DESCRIPTIONS.get(name, ''))
 
     return added
 

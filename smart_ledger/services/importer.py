@@ -262,7 +262,7 @@ class Importer:
         counts = dict.fromkeys(('imported', 'auto', 'review', 'errors', 'rules', 'income'), 0)
         counts['dup'] = len(preview.rows) - len(rows)
         months: set[str] = set()
-        # 許可リストのカテゴリがそのまま採用された行のカテゴリ（順序を保って重複なし）
+        # 許可リストのカテゴリがそのまま採用された行のカテゴリ（重複は ensure_categories が除く）
         hinted_categories: list[str] = []
         for row in rows:
             usage_date = date.fromisoformat(row.usage_date)
@@ -295,11 +295,11 @@ class Importer:
             else:
                 counts['review'] += 1
 
-            if row.category_hint and result.category == row.category_hint and result.category not in hinted_categories:
+            if row.category_hint and result.category == row.category_hint:
                 hinted_categories.append(result.category)
 
         # 許可リストのカテゴリ（住宅ローン・売電収入など）が古いファイルの categories シートに無ければ足す。
-        # 加盟店ルールで別カテゴリに振られた行は対象にしない（ユーザーが改名・削除したカテゴリを復活させない）
+        # 加盟店ルールで別カテゴリに振られた行は対象にしない（改名・削除したカテゴリを復活させないには加盟店ルールが要る）
         added_categories = ensure_categories(data, hinted_categories)
 
         data.imports.append(

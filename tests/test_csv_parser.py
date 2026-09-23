@@ -9,22 +9,17 @@ import pytest
 from smart_ledger.services.csv_parser import (
     CsvParseError,
     decode_bytes,
-    find_header_index,
     parse_amount,
     parse_statement_bytes,
+    select_profile,
 )
 
 
 def test_header_detection_not_fixed_line_count() -> None:
     """ヘッダー行は固定行数ではなく「ご利用年月日」で検出する"""
     lines = [['会員番号', 'x'], ['対象カード', 'y'], [], ['メモ', '追加行'], ['ご利用年月日', 'ご利用箇所', 'ご利用額']]
-    assert find_header_index(lines) == 4
-
-
-def test_header_detection_missing_raises() -> None:
-    """ヘッダー行が無ければ CsvParseError"""
-    with pytest.raises(CsvParseError):
-        find_header_index([['a', 'b'], ['c', 'd']])
+    profile, idx = select_profile(lines)
+    assert (profile.name, idx) == ('card', 4)
 
 
 def test_empty_csv_raises() -> None:
@@ -168,7 +163,7 @@ def test_parse_amount(raw: str, expected: int | None) -> None:
 
 
 def test_bank_profile_reads_only_allowed_rows(fixture_bank_csv_bytes: bytes) -> None:
-    """銀行口座 CSV は住宅ローンと売電の行だけを取り込み、他は対象外として数える
+    """銀行口座 CSV は住宅ローンと売電の行だけを取り込み、出金は支出・入金は収入として読む（他は対象外として数える）
 
     Args:
         fixture_bank_csv_bytes: CP932 の銀行 fixture
@@ -179,21 +174,34 @@ def test_bank_profile_reads_only_allowed_rows(fixture_bank_csv_bytes: bytes) -> 
     assert parsed.excluded_lines == 4  # 地方税・利息・定額自動入金・個人宛振込
     assert parsed.skipped_lines == 0 and parsed.warnings == []
     assert {r.merchant_normalized for r in parsed.rows} == {'約定返済 円 住宅', '振込*トウデンPG コウニユウ'}
-
-
-def test_bank_profile_splits_withdrawal_and_deposit(fixture_bank_csv_bytes: bytes) -> None:
-    """出金は支出（住宅ローン）、入金は収入（売電収入）として読む
-
-    Args:
-        fixture_bank_csv_bytes: CP932 の銀行 fixture
-    """
-    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
     loans = [r for r in parsed.rows if r.category_hint == '住宅ローン']
     solar = [r for r in parsed.rows if r.category_hint == '売電収入']
     assert [r.amount for r in loans] == [69000, 70000, 70000]
     assert all(r.kind == 'expense' for r in loans)
     assert [r.amount for r in solar] == [6500, 7000]
     assert all(r.kind == 'income' for r in solar)  # 入金は負数ではなく kind で表す
+
+
+@pytest.mark.parametrize(
+    ('withdrawal', 'deposit', 'expected'),
+    [
+        ('', '7,000', (7000, 'income')),
+        ('0', '7,000', (7000, 'income')),  # 空欄の代わりに 0 を書く銀行でも入金を落とさない
+        ('7,000', '', (7000, 'expense')),
+        ('7,000', '0', (7000, 'expense')),
+    ],
+)
+def test_bank_zero_in_other_column_is_ignored(withdrawal: str, deposit: str, expected: tuple[int, str]) -> None:
+    """出金・入金の反対側の欄が空でも「0」でも、金額のある側で収支を決める
+
+    Args:
+        withdrawal: 出金金額の欄
+        deposit: 入金金額の欄
+        expected: (金額, kind)
+    """
+    content = f'日付,内容,出金金額(円),入金金額(円)\r\n2026/09/05,振込＊トウデンＰＧ　コウニユウ,"{withdrawal}","{deposit}"\r\n'
+    (row,) = parse_statement_bytes(content.encode()).rows
+    assert (row.amount, row.kind) == expected
 
 
 def test_bank_rows_are_sorted_by_date_and_deduplicated(fixture_bank_csv_bytes: bytes) -> None:

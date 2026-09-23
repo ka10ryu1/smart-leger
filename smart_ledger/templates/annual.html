@@ -21,7 +21,7 @@
 {% endif %}
 
 {% set active_months = table.monthly_counts|select|list|length %}
-<section class="stats {{ 'stats-2' if not table.income_total }}">
+<section class="stats {{ 'stats-2' if not table.income_rows }}">
   <div class="stat card">
     <div class="stat-label">{{ table.year }}年の総支出</div>
     <div class="stat-value">{{ table.total|yen }}<small> 円</small></div>
@@ -37,7 +37,7 @@
       <div class="stat-sub">この年の明細はありません</div>
     {% endif %}
   </div>
-  {% if table.income_total %}
+  {% if table.income_rows %}
   <div class="stat card">
     <div class="stat-label">{{ table.year }}年の収入 / 収支</div>
     <div class="stat-value income">+{{ table.income_total|yen }}<small> 円</small></div>
@@ -97,7 +97,7 @@
         {% endfor %}
         <td class="total">{{ table.total|yen }}</td>
       </tr>
-      {% if table.income_total %}
+      {% if table.income_rows %}
       <tr class="income-total">
         <th>月間収入</th>
         {% for t in table.monthly_incomes %}<td>{% if t %}{{ t|yen }}{% else %}<span class="muted">-</span>{% endif %}</td>{% endfor %}

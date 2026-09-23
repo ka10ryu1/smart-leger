@@ -75,7 +75,8 @@ CSV_CARD_META_KEYS: tuple[str, ...] = ('対象カード', 'カード名', 'ご�
 
 # 銀行口座の入出金明細 CSV（プロファイル bank）
 BANK_CSV_HEADER_MARKER = '日付'
-BANK_CSV_DATE_COLUMNS: tuple[str, ...] = ('日付', 'お取引日', '取引日')
+# ヘッダー行は先頭セルの「日付」で検出するので、日付列の候補はそれだけで足りる
+BANK_CSV_DATE_COLUMNS: tuple[str, ...] = (BANK_CSV_HEADER_MARKER,)
 BANK_CSV_DESCRIPTION_COLUMNS: tuple[str, ...] = ('内容', 'お取引内容', '摘要')
 BANK_CSV_WITHDRAWAL_COLUMNS: tuple[str, ...] = ('出金金額', 'お引出し', '支払金額')
 BANK_CSV_DEPOSIT_COLUMNS: tuple[str, ...] = ('入金金額', 'お預入れ', '預入金額')
