@@ -18,7 +18,13 @@ from smart_ledger.services.aggregation import (
     total_spending,
     transactions_in_month,
 )
-from smart_ledger.services.allocations import AllocationError, AllocationInput, validate_allocations
+from smart_ledger.services.allocations import (
+    AllocationError,
+    AllocationInput,
+    copy_previous_allocations,
+    previous_allocation_source,
+    validate_allocations,
+)
 
 
 def make_tx(id_: str, d: date, amount: int, category: str, merchant: str = '店', kind: str = 'expense') -> Transaction:
@@ -158,6 +164,140 @@ def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> 
     tx = make_tx('k', date(2026, 8, 15), 100, 'その他')
     with pytest.raises(AllocationError, match='0'):
         validate_allocations(tx, [AllocationInput('食費', 100), AllocationInput('外食', 0, 'メモ')], categories)
+
+
+def make_kyash_ledger(categories: list[str]) -> LedgerData:
+    """前回の内訳の複写用に、請求月だけ違う KYASH の明細 4 件と別の加盟店の明細を持つ LedgerData を作る
+
+    7 月・8 月の KYASH と 8 月の別の加盟店には内訳があり、9 月の KYASH（複写先）と 10 月の KYASH には無い
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    txs = [
+        make_tx('jul', date(2026, 7, 27), 9000, '食費', 'KYASH 7ガツブン'),
+        make_tx('aug', date(2026, 8, 27), 10000, '食費', 'kyash 8ガツブン'),
+        make_tx('other', date(2026, 8, 28), 5000, '食費', 'SUPER'),
+        make_tx('sep', date(2026, 9, 27), 10500, '食費', 'KYASH 9ガツブン'),
+        make_tx('oct', date(2026, 10, 27), 9500, '食費', 'KYASH 10ガツブン'),
+    ]
+    allocations = [
+        Allocation('jul', '食費', 9000),
+        Allocation('aug', '食費', 6000, 'スーパー'),
+        Allocation('aug', '外食', 4000, 'ランチ'),
+        Allocation('other', '日用品・買い物', 5000),
+    ]
+    return make_ledger(txs, categories, allocations)
+
+
+def test_previous_allocation_source_picks_latest_earlier_same_merchant(categories: list[str]) -> None:
+    """複写元は同じ加盟店キー（請求月・大文字小文字を無視）で内訳があり、利用日が以前の明細のうち最新のもの
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_kyash_ledger(categories)
+
+    def source_id(tx_id: str) -> str | None:
+        """tx_id の明細の複写元の ID を返す
+
+        Args:
+            tx_id: 複写先の明細 ID
+        """
+        tx = data.find_transaction(tx_id)
+        if tx is None:
+            raise AssertionError(tx_id)
+
+        source = previous_allocation_source(data, tx)
+        return source.id if source else None
+
+    assert source_id('sep') == 'aug'  # 別の加盟店（8/28）や内訳の無い後の明細（10 月）は選ばない
+    assert source_id('oct') == 'aug'  # 内訳の無い 9 月は飛ばす
+    assert source_id('aug') == 'jul'  # 自分自身は除く
+    assert source_id('jul') is None  # より前に内訳のある同じ加盟店が無い
+
+    data.transactions.append(make_tx('aug2', date(2026, 8, 27), 10000, '食費', 'KYASH 8ガツブン'))
+    data.allocations.append(Allocation('aug2', '交通', 10000))
+    assert source_id('sep') == 'aug2'  # 利用日が同じなら後から登録した明細
+
+
+def test_copy_previous_allocations_moves_difference_to_last_row(categories: list[str]) -> None:
+    """前回の内訳を順序・メモごと複写し、金額の差額は最後の行に寄せる（元の内訳は変えない）
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_kyash_ledger(categories)
+    sep = data.find_transaction('sep')
+    if sep is None:
+        raise AssertionError('sep')
+
+    copied = copy_previous_allocations(data, sep)
+    if copied is None:
+        raise AssertionError('copy')
+
+    assert copied.source.id == 'aug' and copied.difference == 500 and not copied.last_row_flipped
+    assert copied.items == [AllocationInput('食費', 6000, 'スーパー'), AllocationInput('外食', 4500, 'ランチ')]
+    assert validate_allocations(sep, copied.items, categories)  # そのまま保存できる
+    assert [a.amount for a in data.allocations_for('aug')] == [6000, 4000]
+
+    sep.amount = 10000  # 同じ金額なら差額なし
+    same = copy_previous_allocations(data, sep)
+    assert same is not None and same.difference == 0 and [i.amount for i in same.items] == [6000, 4000]
+
+    sep.amount = 3000  # 最後の行が明細と逆の符号になる場合もそのまま返し、見直しの印を付ける
+    smaller = copy_previous_allocations(data, sep)
+    assert smaller is not None and [i.amount for i in smaller.items] == [6000, -3000] and smaller.last_row_flipped
+
+    sep.amount = 6000  # 最後の行が 0 円になる場合も同じ
+    zero = copy_previous_allocations(data, sep)
+    assert zero is not None and [i.amount for i in zero.items] == [6000, 0] and zero.last_row_flipped
+
+    jul = data.find_transaction('jul')
+    if jul is None:
+        raise AssertionError('jul')
+
+    assert copy_previous_allocations(data, jul) is None
+
+
+def test_previous_allocations_match_sign_and_kind(categories: list[str]) -> None:
+    """返金（マイナス金額）は返金どうし、収入は収入どうしで複写元を選び、返金の正しい複写には見直しの印を付けない
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_kyash_ledger(categories)
+    data.transactions += [
+        make_tx('ref_aug', date(2026, 8, 30), -3000, '食費', 'KYASH 8ガツブン'),
+        make_tx('inc_aug', date(2026, 8, 31), 2000, '食費', 'KYASH 8ガツブン', kind='income'),
+        make_tx('ref_sep', date(2026, 9, 29), -2500, '食費', 'KYASH 9ガツブン'),
+        make_tx('inc_sep', date(2026, 9, 30), 2500, '食費', 'KYASH 9ガツブン', kind='income'),
+    ]
+    data.allocations += [
+        Allocation('ref_aug', '食費', -1000),
+        Allocation('ref_aug', '外食', -2000),
+        Allocation('inc_aug', 'その他', 2000),
+    ]
+
+    def copy_of(tx_id: str) -> tuple[str, list[int], bool]:
+        """tx_id の明細に複写した結果の（複写元 ID・金額の並び・見直しの印）を返す
+
+        Args:
+            tx_id: 複写先の明細 ID
+        """
+        tx = data.find_transaction(tx_id)
+        if tx is None:
+            raise AssertionError(tx_id)
+
+        copied = copy_previous_allocations(data, tx)
+        if copied is None:
+            raise AssertionError(f'no source: {tx_id}')
+
+        return copied.source.id, [i.amount for i in copied.items], copied.last_row_flipped
+
+    assert copy_of('sep') == ('aug', [6000, 4500], False)  # より新しい返金・収入があっても通常の支出から写す
+    assert copy_of('ref_sep') == ('ref_aug', [-1000, -1500], False)  # 返金は返金から写し、正しい結果なら印なし
+    assert copy_of('inc_sep') == ('inc_aug', [2500], False)  # 収入は収入から写す
 
 
 def test_annual_table_matrix_and_totals(categories: list[str]) -> None:

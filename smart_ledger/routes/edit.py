@@ -7,7 +7,12 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 
 from ..constants import KIND_LABELS
 from ..models import LedgerData
-from ..services.allocations import AllocationInput, replace_allocations, validate_allocations
+from ..services.allocations import (
+    AllocationInput,
+    copy_previous_allocations,
+    replace_allocations,
+    validate_allocations,
+)
 from ..services.merchant_rules import CategoryChange, apply_manual_category, match_rule, preview_rule_targets
 from ..services.normalize import merchant_key
 from .common import bp, edit_url, load_data, safe_back, save_and_redirect, svc
@@ -42,7 +47,7 @@ def parse_allocation_form() -> list[AllocationInput]:
 
 @bp.route('/transactions/<tx_id>/edit')
 def edit_transaction(tx_id: str) -> str:
-    """明細編集画面
+    """明細編集画面（copy_allocations=1 なら内訳フォームを前回の内訳の複写で埋める。保存はしない）
 
     Args:
         tx_id: 明細 ID
@@ -54,10 +59,16 @@ def edit_transaction(tx_id: str) -> str:
 
     # 提案パターンをルール化したときの反映対象（手動修正済みは除く）
     same_merchant = preview_rule_targets(data, merchant_key(tx.merchant_normalized), tx.id)
+    allocations = data.allocations_for(tx_id)
+    previous = copy_previous_allocations(data, tx)
+    copy_requested = request.args.get('copy_allocations') == '1'
     return render_template(
         'edit.html',
         tx=tx,
-        allocations=data.allocations_for(tx_id),
+        allocations=allocations,
+        alloc_rows=previous.items if previous and copy_requested else allocations,
+        previous_allocations=previous,
+        copy_requested=copy_requested,
         categories=data.category_names(),
         rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),

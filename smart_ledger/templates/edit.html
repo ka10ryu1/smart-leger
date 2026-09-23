@@ -45,13 +45,23 @@
   </form>
 </section>
 
-<section class="card">
+<section class="card" id="allocations">
   <h2>内訳分割(allocations)</h2>
   <p class="hint">KYASH などまとめて決済した明細を複数カテゴリに分けられます。内訳の合計は明細金額 <strong>{{ tx.amount|yen }} 円</strong> と一致させてください。カテゴリ別集計では内訳を、総支出では明細金額を 1 回だけ使います。</p>
+  {% set prev = previous_allocations %}
+  {% if prev and copy_requested %}
+  <p class="notice">{{ prev.source.usage_date.strftime('%Y/%m/%d') }} の明細({{ prev.source.amount|yen }} 円)の内訳 {{ prev.items|length }} 行を複写しました。「内訳を保存」を押すまで保存されません。{% if prev.difference %}金額の差額 {{ '+' if prev.difference > 0 }}{{ prev.difference|yen }} 円を最後の行に寄せました。{% endif %}{% if prev.last_row_flipped %}最後の行が 0 円または明細金額と逆の符号になったため、金額を見直してください。{% endif %}
+    <a href="{{ url_for('ledger.edit_transaction', tx_id=tx.id, back=back, _anchor='allocations') }}">複写をやめる</a></p>
+  {% elif prev %}
+  <p><a class="btn btn-sm" href="{{ url_for('ledger.edit_transaction', tx_id=tx.id, back=back, copy_allocations=1, _anchor='allocations') }}">前回の内訳を複写</a>
+    <small class="muted">{{ prev.source.usage_date.strftime('%Y/%m/%d') }} {{ prev.source.merchant_normalized }} {{ prev.source.amount|yen }} 円の内訳 {{ prev.items|length }} 行{% if allocations %}(入力欄を置き換えます){% endif %}</small></p>
+  {% elif copy_requested %}
+  <p class="notice">利用日がこの明細以前で、同じ加盟店・収支・金額の符号の明細に、内訳を保存したものがないため複写できません。</p>
+  {% endif %}
   <form method="post" action="{{ url_for('ledger.update_allocations', tx_id=tx.id) }}" id="alloc-form" data-total="{{ tx.amount }}" data-submit-once>
     <input type="hidden" name="back" value="{{ back }}">
     <div id="alloc-rows" class="alloc-rows">
-      {% set rows = allocations if allocations else [None, None] %}
+      {% set rows = alloc_rows if alloc_rows else [None, None] %}
       {% for a in rows %}
       <div class="alloc-row">
         <select name="alloc_category">

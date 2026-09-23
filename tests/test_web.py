@@ -330,6 +330,55 @@ def test_clear_allocations_removes_existing_rows(client: FlaskClient) -> None:
     assert repo.load().allocations == []
 
 
+def test_edit_copies_previous_allocations_without_saving(client: FlaskClient) -> None:
+    """編集画面の「前回の内訳を複写」は同じ加盟店キーの前回の内訳でフォームを埋め、差額を最後の行に寄せる（保存はしない）
+
+    Args:
+        client: テストクライアント
+    """
+    repo = client.application.extensions['smart_ledger'].repo
+
+    def mutate(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_aug', date(2026, 8, 27), 'KYASH', 'KYASH 8ガツブン', 10000, '食費'))
+        data.transactions.append(Transaction('tx_sep', date(2026, 9, 27), 'KYASH', 'KYASH 9ガツブン', 10500, '食費'))
+        data.allocations.append(Allocation('tx_aug', '食費', 6000, 'スーパー'))
+        data.allocations.append(Allocation('tx_aug', '外食', 4000, 'ランチ'))
+
+    repo.update(mutate)
+
+    html = client.get('/transactions/tx_sep/edit?back=/review').get_data(as_text=True)
+    assert '>前回の内訳を複写</a>' in html
+    assert 'href="/transactions/tx_sep/edit?back=/review&amp;copy_allocations=1#allocations"' in html
+    assert '2026/08/27 KYASH 8ガツブン 10,000 円の内訳 2 行' in html
+    assert 'value="6000"' not in html  # 押すまではフォームを埋めない
+
+    copied = client.get('/transactions/tx_sep/edit?back=/review&copy_allocations=1').get_data(as_text=True)
+    assert '2026/08/27 の明細(10,000 円)の内訳 2 行を複写しました。' in copied
+    assert '金額の差額 +500 円を最後の行に寄せました。' in copied and '金額を見直してください' not in copied
+    assert 'value="6000"' in copied and 'value="4500"' in copied and 'value="ランチ"' in copied
+    assert '<option value="外食" selected>' in copied
+    assert 'href="/transactions/tx_sep/edit?back=/review#allocations">複写をやめる</a>' in copied
+    assert '>前回の内訳を複写</a>' not in copied
+    assert repo.load().allocations_for('tx_sep') == []
+
+    client.post(
+        '/transactions/tx_sep/allocations',
+        data={
+            'alloc_category': ['食費', '外食'],
+            'alloc_amount': ['6000', '4500'],
+            'alloc_memo': ['スーパー', 'ランチ'],
+        },
+    )
+    assert [a.amount for a in repo.load().allocations_for('tx_sep')] == [6000, 4500]
+    assert '(入力欄を置き換えます)' in client.get('/transactions/tx_sep/edit').get_data(as_text=True)
+
+    first = client.get('/transactions/tx_aug/edit').get_data(as_text=True)
+    assert '前回の内訳を複写' not in first  # 前回にあたる明細が無ければ出さない
+    assert 'value="6000"' in first  # 保存済みの内訳はそのまま表示する
+    first_copy = client.get('/transactions/tx_aug/edit?copy_allocations=1').get_data(as_text=True)
+    assert '内訳を保存したものがないため複写できません。' in first_copy and 'value="6000"' in first_copy
+
+
 def test_cross_site_post_is_rejected(client: FlaskClient) -> None:
     """Origin のホストが一致しない POST は 403、一致すれば受け付ける
 
