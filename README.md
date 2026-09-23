@@ -70,7 +70,7 @@ cd smart-ledger
 `setup.cmd` は内部の PowerShell スクリプトを呼び出し、次を行います。利用者が `.ps1` を直接選ぶ必要はありません。
 
 1. uv を検出
-2. Python 3.12 と仮想環境 `.venv` を用意
+2. Python 3.12 と仮想環境 `.venv` を用意（`\\wsl.localhost\...` などネットワーク上のフォルダでは、WSL 側の `.venv` と衝突しないよう `.venv-windows` を使う）
 3. `uv.lock` に従って依存パッケージを同期
 4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
 5. `.env` が無ければ `.env.example` からコピー
@@ -80,10 +80,10 @@ cd smart-ledger
 - **ウィンドウがすぐ閉じる**: PowerShell を開いて `.\setup.cmd` または `.\start.cmd` を実行すると、閉じる前のメッセージを確認できます。セットアップの詳細は `logs\setup_YYYYMMDD_HHMMSS.log` にも記録されます
 - **起動したのに画面が古い / 変更が反映されない**: 起動中のウィンドウを閉じずに再度 `start.cmd` を実行すると、Windows では同じポートに 2 つ目のサーバーが同居し、古い方が応答し続けることがあります。現在は 2 つ目の起動を検知して既存の画面をブラウザで開くだけにしています。コードを更新したら、起動中のウィンドウで Ctrl+C してから `start.cmd` を実行してください
 - **「ポート 5000 は使用中ですが Smart Ledger の応答を確認できませんでした」と出る**: 別のプログラムが同じポートを使っているか、応答しなくなった Smart Ledger のウィンドウが残っています。該当ウィンドウを閉じるか、`.env` の `SMART_LEDGER_PORT` を別の番号に変えてください。「ポート 5000 を使用できません(予約済み、または権限がありません)」の場合は OS がそのポートを予約しているので、ポート番号を変えてください
-- **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
+- **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、仮想環境（`.venv-windows`）のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
 - **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行してから `setup.cmd` を再実行してください。`git clone` したファイルには付きません
 - **uv が見つかりません**: `setup.cmd` の確認で `Y` または Enter キーを押すと winget で自動インストールされます。`winget` 自体が見つからない場合は、Microsoft Store の App Installer を更新してください
-- **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら `winget upgrade --id=astral-sh.uv -e` で更新してください。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
+- **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら更新してください（公式インストーラーで入れた場合は `uv self update`、winget で入れた場合は `winget upgrade --id=astral-sh.uv -e`）。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
 
 ### 3. .env を設定
 
@@ -128,10 +128,10 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 .\start.cmd
 ```
 
-- セットアップ済み `.venv` の Python で Flask を直接起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます（通常起動では `uv run` の同期確認を挟みません）
+- セットアップ済み仮想環境の Python で Flask を直接起動し、既定のブラウザで <http://localhost:5000> を自動的に開きます（通常起動では `uv run` の同期確認を挟みません）
 - 終了は PowerShell で `Ctrl+C`
 
-手動で起動する場合:
+手動で起動する場合（`\\wsl.localhost\...` などネットワーク上のフォルダでは `.venv` を `.venv-windows` に読み替える）:
 
 ```powershell
 .\.venv\Scripts\python.exe app.py --open-browser
@@ -417,7 +417,7 @@ uv run --locked python tools\insert_block_blank_lines.py smart_ledger tests tool
 次のものは `.gitignore` で除外されており、コミットされません。
 
 - `.env`(API キー)
-- `.venv/`
+- `.venv/`、`.venv-windows/`
 - `data/`(household.xlsx、バックアップ、staging)
 - `logs/`
 - `*.xlsx`、`*.csv`(実際のカード明細)

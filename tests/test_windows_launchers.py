@@ -38,6 +38,7 @@ def test_setup_uses_locked_uv_environment() -> None:
     assert 'Read-Host "uv が見つかりません。winget でインストールしますか？ [Y/n]"' in setup
     assert 'install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements' in setup
     assert 'winget upgrade --id=astral-sh.uv -e' in setup
+    assert 'uv self update' in setup
     assert 'pip install' not in setup
 
 
@@ -45,5 +46,20 @@ def test_start_uses_synced_venv_without_uv_overhead() -> None:
     """通常起動は同期済み仮想環境を直接使い uv の確認処理を挟まない"""
     start = (ROOT / 'scripts' / 'windows' / 'start.ps1').read_text(encoding='utf-8-sig')
 
-    assert 'Join-Path $projectRoot ".venv\\Scripts\\python.exe"' in start
+    assert 'Join-Path $projectRoot "$venvName\\Scripts\\python.exe"' in start
     assert 'uv run' not in start
+
+
+def test_unc_folder_uses_separate_windows_venv() -> None:
+    """UNC 上では WSL の .venv と衝突しないよう setup と start が同じ Windows 用環境名を使う"""
+    scripts = {
+        name: (ROOT / 'scripts' / 'windows' / name).read_text(encoding='utf-8-sig')
+        for name in ('setup.ps1', 'start.ps1')
+    }
+    decision = '$venvName = if ($projectRoot -like "\\\\*") { ".venv-windows" } else { ".venv" }'
+
+    for script in scripts.values():
+        assert decision in script
+
+    assert '$env:UV_PROJECT_ENVIRONMENT = Join-Path $projectRoot $venvName' in scripts['setup.ps1']
+    assert '.venv-windows/' in (ROOT / '.gitignore').read_text(encoding='utf-8').splitlines()
