@@ -34,7 +34,7 @@
       <div class="stat-sub">明細のある {{ active_months }} か月で割った値</div>
     {% else %}
       <div class="stat-value muted">-</div>
-      <div class="stat-sub">この年の明細はありません</div>
+      <div class="stat-sub">この年の支出はありません</div>
     {% endif %}
   </div>
   {% if table.income_rows %}
@@ -70,7 +70,7 @@
       <tr>
         <th>{{ r.category }}</th>
         {% for a in r.amounts %}
-        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category, kind='expense') }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
         {% endfor %}
         <td class="total">{{ r.total|yen }}</td>
       </tr>
@@ -82,7 +82,7 @@
       <tr>
         <th>{{ r.category }}</th>
         {% for a in r.amounts %}
-        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category, kind='income') }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
         {% endfor %}
         <td class="total">{{ r.total|yen }}</td>
       </tr>

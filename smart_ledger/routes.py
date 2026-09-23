@@ -484,7 +484,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     kind = request.form.get('kind', '')
     back = safe_back()
 
-    def mutate(data: LedgerData) -> tuple[int, str, bool]:
+    def mutate(data: LedgerData) -> tuple[int, str, bool, str]:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
@@ -495,13 +495,14 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         if kind and kind not in KIND_LABELS:
             raise ValueError(f'不明な収支です: {kind}')
 
+        changed_kind = kind if kind and kind != tx.kind else ''  # 収支を変えたときだけメッセージに出す
         tx.kind = kind or tx.kind
         tx.category = category
         tx.confidence = None
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
         if scope != 'always':
-            return 0, '', True
+            return 0, '', True, changed_kind
 
         rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
         targets = [
@@ -512,10 +513,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             other.confidence = None
             other.classification_source = SOURCE_RULE
 
-        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None
+        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None, changed_kind
 
     try:
-        applied_others, pattern, matches_self = svc().repo.update(mutate)
+        applied_others, pattern, matches_self, changed_kind = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
@@ -526,6 +527,9 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             msg += f' 一致する {applied_others} 件にも適用しました。'
     else:
         msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
+
+    if changed_kind:
+        msg += f' 収支を「{KIND_LABELS[changed_kind]}」に変更しました。'
 
     flash(msg, 'success')
     if not matches_self:

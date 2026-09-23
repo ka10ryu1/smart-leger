@@ -269,8 +269,12 @@ def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_byt
         f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'bogus'}, follow_redirects=True
     )
     assert '不明な収支です' in response.get_data(as_text=True)
-    client.post(f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'income'})
-    client.post(f'/transactions/{tx_id}/category', data={'category': '外食'})
+    response = client.post(
+        f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'income'}, follow_redirects=True
+    )
+    assert '収支を「収入」に変更しました' in response.get_data(as_text=True)
+    response = client.post(f'/transactions/{tx_id}/category', data={'category': '外食'}, follow_redirects=True)
+    assert '収支を' not in response.get_data(as_text=True)
     assert '+10,000' in client.get('/transactions?kind=income').get_data(as_text=True)
 
 
@@ -503,8 +507,8 @@ def test_annual_page_summary_and_links(client: FlaskClient, fixture_csv_bytes: b
     assert '2026年の総支出' in html
     assert '45,590' in html  # 8 月の月間総支出（test_web_flow と同じ値）
     assert '16,013' in html and '明細のある 3 か月で割った値' in html
-    food_path = '/transactions?month=2026-07&category=%E9%A3%9F%E8%B2%BB'
-    unclassified_path = '/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E'
+    food_path = '/transactions?month=2026-07&category=%E9%A3%9F%E8%B2%BB&kind=expense'
+    unclassified_path = '/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E&kind=expense'
     assert f'href="{food_path.replace("&", "&amp;")}"' in html
     assert f'href="{unclassified_path.replace("&", "&amp;")}"' in html
     assert 'href="/annual?year=2025"' in html and 'href="/annual?year=2027"' in html
@@ -580,6 +584,7 @@ def test_bank_csv_import_flow(client: FlaskClient, fixture_bank_csv_bytes: bytes
     assert '209,000' in html  # 年間の総支出 69,000 + 140,000
     assert '+13,500' in html  # 年間の収入 6,500 + 7,000
     assert '-195,500' in html  # 収支
+    assert 'category=%E5%A3%B2%E9%9B%BB%E5%8F%8E%E5%85%A5&amp;kind=income' in html  # 収入行のリンクは収入だけに絞る
 
     html = client.get('/transactions?kind=income').get_data(as_text=True)
     assert '<span class="badge cat">売電収入</span>' in html  # カテゴリ選択の option とは別に明細行に出る

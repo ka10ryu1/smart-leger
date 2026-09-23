@@ -310,7 +310,7 @@ def annual_rows(amounts: dict[str, list[int]], category_order: list[str]) -> lis
 def annual_table(data: LedgerData, year: int) -> AnnualTable:
     """カテゴリ × 月の年間表を作る（その年に明細か内訳があるカテゴリだけを sort_order 順に並べ、未登録のカテゴリは末尾）
 
-    支出と収入は別の表にする（加盟店ルールで同じカテゴリ名が両方に出ることもあるが、混ぜて合計はしない）
+    支出と収入は別の表にする（加盟店ルールや明細編集での収支の変更で同じカテゴリ名が両方に出ることもあるが、混ぜて合計はしない）
 
     Args:
         data: 全データ
