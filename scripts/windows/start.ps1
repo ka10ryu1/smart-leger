@@ -4,7 +4,7 @@ param([switch]$NoPause)
 $ErrorActionPreference = "Stop"
 # Resolve-Path は UNC パス (\\wsl.localhost\...) に "Microsoft.PowerShell.Core\FileSystem::" を付け ".." も残すため GetFullPath で正規化する
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
-# \\wsl.localhost\... など UNC 上のフォルダは WSL 側の .venv(Linux 用)と共有されるため、Windows 用の環境を別名で作る
+# \\wsl.localhost\... など UNC 上のフォルダは WSL 側の .venv(Linux 用)と共有されるため、Windows 用の環境は別名にする
 $venvName = if ($projectRoot -like "\\*") { ".venv-windows" } else { ".venv" }
 Set-Location -LiteralPath $projectRoot
 
@@ -39,7 +39,7 @@ try {
 
     Write-Host "Smart Ledger を起動します: http://localhost:$port  (終了は Ctrl+C)" -ForegroundColor Cyan
     if ($projectRoot -like "\\*") {
-        # \\wsl.localhost\... などネットワーク越しのフォルダでは .venv の読み込みが極端に遅くなる
+        # \\wsl.localhost\... などネットワーク越しのフォルダでは仮想環境の読み込みが極端に遅くなる
         Write-Host "注意: ネットワーク上のフォルダ($projectRoot)から起動しています。ライブラリの読み込みに数分かかることがあります。Windows のローカルディスク(例: C:\Users\<名前>\smart-leger)に置くと数秒で起動します。" -ForegroundColor Yellow
     }
     $env:PYTHONUTF8 = "1"

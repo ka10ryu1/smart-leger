@@ -6,7 +6,7 @@ param([switch]$NoPause)
 $ErrorActionPreference = "Stop"
 # Resolve-Path は UNC パス (\\wsl.localhost\...) に "Microsoft.PowerShell.Core\FileSystem::" を付け ".." も残すため GetFullPath で正規化する
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
-# \\wsl.localhost\... など UNC 上のフォルダは WSL 側の .venv(Linux 用)と共有されるため、Windows 用の環境を別名で作る
+# \\wsl.localhost\... など UNC 上のフォルダは WSL 側の .venv(Linux 用)と共有されるため、Windows 用の環境は別名にする
 $venvName = if ($projectRoot -like "\\*") { ".venv-windows" } else { ".venv" }
 Set-Location -LiteralPath $projectRoot
 
