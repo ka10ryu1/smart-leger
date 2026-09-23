@@ -24,6 +24,11 @@
         {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == tx.category }}>{{ c }}</option>{% endfor %}
       </select>
     </label>
+    <label>収支
+      <select name="kind">
+        {% for value, label in kind_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == tx.kind }}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
     <div class="radio-group">
       <label class="radio"><input type="radio" name="scope" value="once" checked> 今回だけ変更</label>
       <label class="radio"><input type="radio" name="scope" value="always"> 今後この加盟店は同じカテゴリ(ルール登録) <small class="muted">/ パターンに一致する明細が他に <span id="rule-preview-count" data-url="{{ url_for('ledger.rule_preview', tx_id=tx.id) }}">{{ same_merchant_count }}</span> 件</small></label>

@@ -255,6 +255,25 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
     assert '内訳の金額が数値ではありません' in response.get_data(as_text=True)
 
 
+def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """明細編集で収支を変えられ、kind を送らないフォーム（要確認画面）では収支を変えない
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
+    tx_id = first_tx_id(client, 'SAMPLE')
+    assert 'name="kind"' in client.get(f'/transactions/{tx_id}/edit').get_data(as_text=True)
+    response = client.post(
+        f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'bogus'}, follow_redirects=True
+    )
+    assert '不明な収支です' in response.get_data(as_text=True)
+    client.post(f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'income'})
+    client.post(f'/transactions/{tx_id}/category', data={'category': '外食'})
+    assert '+10,000' in client.get('/transactions?kind=income').get_data(as_text=True)
+
+
 def test_clear_allocations_requires_existing_transaction(client: FlaskClient) -> None:
     """存在しない明細 ID の内訳削除は成功表示にせず404にする
 

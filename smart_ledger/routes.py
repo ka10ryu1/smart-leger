@@ -471,7 +471,8 @@ def save_and_redirect[T](
 def update_category(tx_id: str) -> WerkzeugResponse:
     """カテゴリ変更（scope=once なら今回だけ、always ならルール登録してパターンに一致する明細にも反映）
 
-    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う
+    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う。
+    フォームに kind があればこの明細の収支も変える（ルールには載せない。要確認画面のフォームには無いので変えない）
 
     Args:
         tx_id: 明細 ID
@@ -480,6 +481,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     scope = request.form.get('scope', 'once')
     memo = request.form.get('memo', '').strip()
     rule_pattern = request.form.get('rule_pattern', '').strip()
+    kind = request.form.get('kind', '')
     back = safe_back()
 
     def mutate(data: LedgerData) -> tuple[int, str, bool]:
@@ -490,6 +492,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         if category not in data.category_names():
             raise ValueError(f'不明なカテゴリです: {category}')
 
+        if kind and kind not in KIND_LABELS:
+            raise ValueError(f'不明な収支です: {kind}')
+
+        tx.kind = kind or tx.kind
         tx.category = category
         tx.confidence = None
         tx.classification_source = SOURCE_MANUAL
