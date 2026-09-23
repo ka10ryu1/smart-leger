@@ -11,7 +11,7 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 from ..constants import KIND_EXPENSE
 from ..models import LedgerData
 from ..services.manual_entries import ManualEntryInput, add_manual_transaction, delete_manual_transaction
-from .common import bp, load_data, safe_back, svc
+from .common import bp, edit_url, load_data, safe_back, svc
 
 
 @bp.route('/transactions/<tx_id>/delete', methods=['POST'])
@@ -34,7 +34,7 @@ def delete_transaction(tx_id: str) -> WerkzeugResponse:
         merchant, allocations = svc().repo.update(mutate)
     except ValueError as exc:  # 取込明細の削除要求（ManualEntryError）
         flash(str(exc), 'error')
-        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+        return redirect(edit_url(tx_id))
 
     extra = f' 内訳 {allocations} 件も削除しました。' if allocations else ''
     flash(f'明細「{merchant}」を削除しました。{extra}', 'success')

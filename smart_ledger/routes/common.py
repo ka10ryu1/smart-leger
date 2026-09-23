@@ -188,6 +188,15 @@ def safe_back() -> str:
     return url_for('ledger.transactions')
 
 
+def edit_url(tx_id: str) -> str:
+    """明細編集画面の URL を返す（戻り先として safe_back() を引き継ぐ）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    return url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
+
+
 def save_and_redirect[T](
     mutator: Callable[[LedgerData], T], message: Callable[[T], str], target: str
 ) -> WerkzeugResponse:

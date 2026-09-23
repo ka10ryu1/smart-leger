@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from flask import abort, flash, redirect, render_template, request, url_for
+from flask import abort, flash, redirect, render_template, request
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from ..constants import KIND_LABELS
@@ -10,7 +10,7 @@ from ..models import LedgerData
 from ..services.allocations import AllocationInput, replace_allocations, validate_allocations
 from ..services.merchant_rules import CategoryChange, apply_manual_category, match_rule, preview_rule_targets
 from ..services.normalize import merchant_key
-from .common import bp, load_data, safe_back, save_and_redirect, svc
+from .common import bp, edit_url, load_data, safe_back, save_and_redirect, svc
 
 
 def parse_allocation_form() -> list[AllocationInput]:
@@ -123,7 +123,7 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         change = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
-        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+        return redirect(edit_url(tx_id))
 
     flash(message(change), 'success')
     if not change.matches_self:
@@ -142,7 +142,6 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
     Args:
         tx_id: 明細 ID
     """
-    edit_url = url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
 
     def mutate(data: LedgerData) -> bool:
         tx = data.find_transaction(tx_id)
@@ -154,7 +153,7 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
         return bool(items)
 
     return save_and_redirect(
-        mutate, lambda saved: '内訳を保存しました。' if saved else '内訳を削除しました。', edit_url
+        mutate, lambda saved: '内訳を保存しました。' if saved else '内訳を削除しました。', edit_url(tx_id)
     )
 
 
@@ -172,6 +171,4 @@ def clear_allocations(tx_id: str) -> WerkzeugResponse:
 
         replace_allocations(data, tx_id, [])
 
-    return save_and_redirect(
-        mutate, lambda _: '内訳を削除しました。', url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
-    )
+    return save_and_redirect(mutate, lambda _: '内訳を削除しました。', edit_url(tx_id))

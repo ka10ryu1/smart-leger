@@ -255,10 +255,10 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
     assert '一致する 1 件にも適用しました' in response.get_data(as_text=True)
     response = client.post(
         f'/transactions/{tx_id}/allocations',
-        data={'alloc_category': ['食費'], 'alloc_amount': ['abc'], 'alloc_memo': ['']},
-        follow_redirects=True,
+        data={'alloc_category': ['食費'], 'alloc_amount': ['abc'], 'alloc_memo': [''], 'back': '/review'},
     )
-    assert '内訳の金額が数値ではありません' in response.get_data(as_text=True)
+    assert response.headers['Location'] == f'/transactions/{tx_id}/edit?back=/review'
+    assert '内訳の金額が数値ではありません' in client.get(response.headers['Location']).get_data(as_text=True)
 
 
 def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
@@ -324,8 +324,9 @@ def test_clear_allocations_removes_existing_rows(client: FlaskClient) -> None:
 
     repo = client.application.extensions['smart_ledger'].repo
     repo.update(add_data)
-    body = client.post('/transactions/tx_alloc/allocations/clear', follow_redirects=True).get_data(as_text=True)
-    assert '内訳を削除しました' in body
+    response = client.post('/transactions/tx_alloc/allocations/clear')
+    assert response.headers['Location'] == '/transactions/tx_alloc/edit?back=/transactions'
+    assert '内訳を削除しました' in client.get(response.headers['Location']).get_data(as_text=True)
     assert repo.load().allocations == []
 
 
@@ -968,6 +969,7 @@ def test_imported_transaction_cannot_be_deleted(client: FlaskClient, fixture_csv
     tx_id = first_tx_id(client, 'サンプルスーパー')
     assert 'この明細を削除' not in client.get(f'/transactions/{tx_id}/edit').get_data(as_text=True)
 
-    body = client.post(f'/transactions/{tx_id}/delete', follow_redirects=True).get_data(as_text=True)
-    assert 'CSV から取り込んだ明細は削除できません' in body
+    response = client.post(f'/transactions/{tx_id}/delete', data={'back': 'https://evil.example'})
+    assert response.headers['Location'] == f'/transactions/{tx_id}/edit?back=/transactions'  # 外部 URL は一覧に置換
+    assert 'CSV から取り込んだ明細は削除できません' in client.get(response.headers['Location']).get_data(as_text=True)
     assert len(repo.load().transactions) == before
