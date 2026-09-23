@@ -25,6 +25,7 @@ from .config import Config
 from .constants import (
     BANK_CSV_TARGETS,
     CATEGORY_DESCRIPTIONS,
+    CONFIDENCE_FILTER_PATTERN,
     FALLBACK_CATEGORY,
     KIND_LABELS,
     MONTH_PATTERN,
@@ -346,9 +347,52 @@ def annual_export(fmt: str) -> Response:
     )
 
 
+def parse_confidence_filter(
+    raw: str, op: str, ops: tuple[str, ...] = ('gte', 'lte', 'none')
+) -> tuple[float | None, str]:
+    """明細一覧の確信度の絞り込み条件を解釈する（CONFIDENCE_FILTER_PATTERN に合わない入力は None にして絞り込まない）
+
+    Args:
+        raw: 閾値の入力文字列（conf パラメータ）
+        op: 比較方法（gte: 以上 / lte: 以下 / none: 未設定。それ以外はフォームの既定と同じ lte）
+        ops: 受け付ける比較方法
+
+    Returns:
+        (閾値, 比較方法) のタプル（閾値は不正な入力なら None）
+    """
+    if op not in ops:
+        op = 'lte'
+
+    if not CONFIDENCE_FILTER_PATTERN.match(raw):
+        return None, op
+
+    return float(raw), op
+
+
+def match_confidence(value: float | None, threshold: float | None, op: str) -> bool:
+    """明細の confidence が確信度の絞り込み条件に一致するか（一覧の表示と揃えるため conf フィルタの 2 桁表示で比較する）
+
+    Args:
+        value: 明細の confidence
+        threshold: 閾値（None なら未入力・不正な入力として条件を掛けない）
+        op: 比較方法（gte / lte / none。none は閾値を無視して confidence が空の明細だけに一致する）
+    """
+    if op == 'none':
+        return value is None
+
+    if threshold is None:
+        return True
+
+    if value is None:  # ルール・手動の明細は confidence が空なので、数値の条件では除外する
+        return False
+
+    shown = float(conf(value))
+    return shown >= threshold if op == 'gte' else shown <= threshold
+
+
 @bp.route('/transactions')
 def transactions() -> str:
-    """明細一覧（月・収支・カテゴリ・分類元・加盟店名で絞り込み。カテゴリは内訳のカテゴリにも一致させる）"""
+    """明細一覧（月・収支・カテゴリ・分類元・加盟店名・確信度で絞り込み。カテゴリは内訳のカテゴリにも一致させる）"""
     data = load_data()
     month = request.args.get('month', '').strip()
     if month and not MONTH_PATTERN.match(month):
@@ -361,6 +405,9 @@ def transactions() -> str:
     if kind not in KIND_LABELS:
         kind = ''
 
+    threshold, conf_op = parse_confidence_filter(
+        request.args.get('conf', '').strip(), request.args.get('conf_op', '').strip()
+    )
     allocs = data.allocations_by_transaction()
     txs = list(data.transactions)
     if month:
@@ -384,6 +431,8 @@ def transactions() -> str:
     if query:
         txs = [t for t in txs if query in t.merchant_normalized.casefold() or query in t.merchant_raw.casefold()]
 
+    txs = [t for t in txs if match_confidence(t.confidence, threshold, conf_op)]
+
     txs.sort(key=lambda t: (t.usage_date, t.id), reverse=True)
     names = data.category_names()
     # 空カテゴリの明細も絞り込めるようにする（旧データに同名カテゴリが残っていれば重複させない）
@@ -403,6 +452,8 @@ def transactions() -> str:
             'q': request.args.get('q', ''),
             'source': source,
             'kind': kind,
+            'conf': '' if threshold is None else f'{threshold:.2f}',  # .8 なども一覧の表示と同じ 2 桁表記で戻す
+            'conf_op': conf_op,
         },
         allocs=allocs,
     )

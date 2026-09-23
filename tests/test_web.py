@@ -713,3 +713,116 @@ def test_annual_hint_explains_list_totals_use_transaction_amount(client: FlaskCl
     html = client.get('/annual?year=2026').get_data(as_text=True)
     assert '明細一覧は内訳のカテゴリにも一致しますが、件数・合計は明細金額で数えるため' in html
     assert '明細自身のカテゴリで絞り込む' not in html
+
+
+def add_confidence_transactions(client: FlaskClient) -> None:
+    """確信度の絞り込み用に、confidence の異なる明細と内訳のある明細を直接保存する
+
+    Args:
+        client: テストクライアント
+    """
+
+    def mutate(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_low', date(2026, 8, 1), 'LOW', 'LOW', 100, '食費', 0.5, 'jev'))
+        data.transactions.append(Transaction('tx_edge', date(2026, 8, 2), 'EDGE', 'EDGE', 200, '食費', 0.804, 'jev'))
+        data.transactions.append(Transaction('tx_high', date(2026, 8, 3), 'HIGH', 'HIGH', 300, '外食', 0.95, 'jev'))
+        data.transactions.append(Transaction('tx_rule', date(2026, 8, 4), 'RULE', 'RULE', 400, '食費', None, 'rule'))
+        data.transactions.append(Transaction('tx_split', date(2026, 8, 5), 'KYASH', 'KYASH', 1000, '食費', 0.7, 'jev'))
+        data.transactions.append(Transaction('tx_july', date(2026, 7, 5), 'JULY', 'JULY', 500, '食費', 0.1, 'jev'))
+        data.allocations.append(Allocation('tx_split', '日用品・買い物', 600, '洗剤'))
+        data.allocations.append(Allocation('tx_split', '外食', 400, 'ランチ'))
+
+    client.application.extensions['smart_ledger'].repo.update(mutate)
+
+
+def listed_ids(client: FlaskClient, params: str) -> set[str]:
+    """明細一覧に出た明細 ID の集合を返す（add_confidence_transactions の ID だけを見る）
+
+    Args:
+        client: テストクライアント
+        params: クエリ文字列
+    """
+    html = client.get(f'/transactions?{params}').get_data(as_text=True)
+    ids = ('tx_low', 'tx_edge', 'tx_high', 'tx_rule', 'tx_split', 'tx_july')
+    return {i for i in ids if f'/transactions/{i}/edit' in html}
+
+
+def test_confidence_filter_compares_displayed_value(client: FlaskClient) -> None:
+    """確信度の絞り込みは表示と同じ 2 桁で比較し、数値の条件では confidence が空の明細を除く
+
+    Args:
+        client: テストクライアント
+    """
+    add_confidence_transactions(client)
+    assert listed_ids(client, 'conf=0.80&conf_op=lte') == {'tx_low', 'tx_edge', 'tx_split', 'tx_july'}  # 0.804 は 0.80
+    assert listed_ids(client, 'conf=0.80&conf_op=gte') == {'tx_edge', 'tx_high'}
+    assert listed_ids(client, 'conf=0.81&conf_op=gte') == {'tx_high'}
+    assert listed_ids(client, 'conf=1&conf_op=lte') == {'tx_low', 'tx_edge', 'tx_high', 'tx_split', 'tx_july'}
+    assert listed_ids(client, 'conf=0&conf_op=gte') == listed_ids(client, 'conf=1&conf_op=lte')
+    assert listed_ids(client, 'conf=0.80') == listed_ids(client, 'conf=0.80&conf_op=lte')  # 比較方法の既定は以下
+
+    html = client.get('/transactions?conf=0.80&conf_op=gte').get_data(as_text=True)
+    assert '2 件 / 支出 <strong>500 円</strong>' in html
+    assert 'name="conf" value="0.80"' in html and '<option value="gte" selected>' in html
+    assert '確信度が空の明細(ルール・手動など)は含めません' in html
+
+
+def test_confidence_filter_unset_ignores_number(client: FlaskClient) -> None:
+    """「未設定」は数値欄を無視して confidence が空の明細だけを出す
+
+    Args:
+        client: テストクライアント
+    """
+    add_confidence_transactions(client)
+    assert listed_ids(client, 'conf_op=none') == {'tx_rule'}
+    assert listed_ids(client, 'conf=0.50&conf_op=none') == {'tx_rule'}
+    assert '含めません' not in client.get('/transactions?conf=0.50&conf_op=none').get_data(as_text=True)
+
+
+@pytest.mark.parametrize('value', ['abc', '1.01', '-0.01', 'nan', 'inf', '', '0.805', '１', '1e-1', '-0', '1.'])
+def test_confidence_filter_ignores_invalid_input(client: FlaskClient, value: str) -> None:
+    """数値でない・0〜1 の範囲外・半角で小数 2 桁以内でない確信度は無視して絞り込まない（比較方法が不正なら既定の以下）
+
+    Args:
+        client: テストクライアント
+        value: 不正な確信度の入力
+    """
+    add_confidence_transactions(client)
+    everything = listed_ids(client, '')
+    assert listed_ids(client, f'conf={value}&conf_op=gte') == everything
+    html = client.get(f'/transactions?conf={value}&conf_op=bogus').get_data(as_text=True)
+    assert 'name="conf" value=""' in html and '<option value="lte" selected>' in html
+    assert listed_ids(client, 'conf=0.80&conf_op=bogus') == listed_ids(client, 'conf=0.80&conf_op=lte')
+
+
+def test_confidence_filter_combines_with_other_filters(client: FlaskClient) -> None:
+    """確信度の絞り込みは月・カテゴリ（内訳のカテゴリを含む）・分類・加盟店と AND で組み合わさり、クリアで消える
+
+    Args:
+        client: テストクライアント
+    """
+    add_confidence_transactions(client)
+    assert listed_ids(client, 'month=2026-08&conf=0.80') == {'tx_low', 'tx_edge', 'tx_split'}
+    assert listed_ids(client, 'source=rule&conf=0.80') == set()
+    assert listed_ids(client, 'q=EDGE&conf=0.80') == {'tx_edge'}
+
+    dining = client.get('/transactions?month=2026-08&category=外食&conf=0.80').get_data(as_text=True)
+    assert 'tx_split' in dining and 'tx_high' not in dining  # 内訳の外食で一致し、明細の確信度で絞る
+    assert '<tr class="tx-alloc review last hit">' in dining  # 内訳行は親の明細と一緒に出る（0.70 は要確認）
+    assert '1 件 / 支出 <strong>1,000 円</strong>' in dining
+    assert '<a class="btn" href="/transactions">クリア</a>' in dining
+
+
+def test_confidence_filter_echoes_normalized_value(client: FlaskClient) -> None:
+    """URL で渡した確信度は一覧の表示と同じ小数 2 桁の表記でフォームに戻す
+
+    Args:
+        client: テストクライアント
+    """
+    add_confidence_transactions(client)
+    for value, shown in (('.8', '0.80'), ('1', '1.00'), ('0.5', '0.50')):
+        html = client.get(f'/transactions?conf={value}&conf_op=gte').get_data(as_text=True)
+        assert f'name="conf" value="{shown}"' in html
+
+    assert listed_ids(client, 'conf=.8&conf_op=gte') == listed_ids(client, 'conf=0.80&conf_op=gte')
+    assert 'name="conf" value=""' in client.get('/transactions?conf=0.805').get_data(as_text=True)

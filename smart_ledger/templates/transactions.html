@@ -31,10 +31,21 @@
   <label>加盟店
     <input type="search" name="q" value="{{ filters.q }}" placeholder="加盟店名で検索">
   </label>
+  <label>確信度
+    <span class="filter-pair">
+      <input type="number" name="conf" value="{{ filters.conf }}" min="0" max="1" step="0.01" inputmode="decimal" placeholder="0.80">
+      <select name="conf_op" aria-label="確信度の比較">
+        {% for op, label in [('gte', '以上'), ('lte', '以下'), ('none', '未設定')] %}<option value="{{ op }}" {{ 'selected' if op == filters.conf_op }}>{{ label }}</option>{% endfor %}
+      </select>
+    </span>
+  </label>
   <button class="btn btn-primary" type="submit">絞り込む</button>
   <a class="btn" href="{{ url_for('ledger.transactions') }}">クリア</a>
 </form>
 <p class="summary-line">{{ transactions|length }} 件 / 支出 <strong>{{ total|yen }} 円</strong>{% if income_total %} / 収入 <strong class="income">+{{ income_total|yen }} 円</strong>{% endif %}</p>
+{% if filters.conf and filters.conf_op != 'none' %}
+<p class="hint">確信度は一覧の表示(小数 2 桁)で比較します。確信度が空の明細(ルール・手動など)は含めません。</p>
+{% endif %}
 {% if filters.category and transactions|selectattr('id', 'in', allocs)|list %}
 <p class="hint">カテゴリの絞り込みは内訳のカテゴリにも一致します。内訳のある明細も件数・合計は明細金額で数え、内訳の金額は足し込みません。</p>
 {% endif %}
