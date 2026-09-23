@@ -45,9 +45,9 @@
 
   <div class="actions">
     {% if preview.new_count > 0 %}
-    <form method="post" action="{{ url_for('ledger.import_commit') }}" class="inline" id="commit-form">
+    <form method="post" action="{{ url_for('ledger.import_commit') }}" class="inline" data-submit-once>
       <input type="hidden" name="token" value="{{ preview.token }}">
-      <button class="btn btn-primary" type="submit" id="commit-btn">{{ preview.new_count }} 件を取り込む</button>
+      <button class="btn btn-primary" type="submit" data-busy-label="分類・保存中…">{{ preview.new_count }} 件を取り込む</button>
       <span class="hint" id="commit-hint">新規明細だけを分類して Excel に保存します{% if jev_enabled %}(Jev への問い合わせに数秒〜数十秒かかることがあります){% endif %}。</span>
     </form>
     {% endif %}

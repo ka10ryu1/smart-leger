@@ -1,0 +1,193 @@
+"""明細編集画面のルート（カテゴリ変更・ルール登録・内訳の保存と削除）"""
+
+from __future__ import annotations
+
+from flask import abort, flash, redirect, render_template, request, url_for
+from werkzeug.wrappers import Response as WerkzeugResponse
+
+from ..constants import KIND_LABELS, SOURCE_MANUAL, SOURCE_RULE
+from ..models import LedgerData
+from ..services.allocations import AllocationInput, replace_allocations, validate_allocations
+from ..services.merchant_rules import match_rule, preview_rule_targets, rule_targets, upsert_rule
+from ..services.normalize import merchant_key
+from .common import bp, load_data, safe_back, save_and_redirect, svc
+
+
+def parse_allocation_form() -> list[AllocationInput]:
+    """内訳フォーム（alloc_category / alloc_amount / alloc_memo の並列リスト）を読む
+
+    Returns:
+        空行を除いた内訳入力（金額が数値でなければ ValueError）
+    """
+    categories = request.form.getlist('alloc_category')
+    amounts = request.form.getlist('alloc_amount')
+    memos = request.form.getlist('alloc_memo')
+    items: list[AllocationInput] = []
+    for i in range(max(len(categories), len(amounts))):
+        cat = categories[i].strip() if i < len(categories) else ''
+        amt_raw = (amounts[i] if i < len(amounts) else '').replace(',', '').strip()
+        memo = memos[i].strip() if i < len(memos) else ''
+        if not cat and not amt_raw and not memo:
+            continue
+
+        try:
+            amt = int(amt_raw) if amt_raw else 0
+        except ValueError as exc:
+            raise ValueError(f'内訳の金額が数値ではありません: {amt_raw}') from exc
+
+        items.append(AllocationInput(category=cat, amount=amt, memo=memo))
+
+    return items
+
+
+@bp.route('/transactions/<tx_id>/edit')
+def edit_transaction(tx_id: str) -> str:
+    """明細編集画面
+
+    Args:
+        tx_id: 明細 ID
+    """
+    data = load_data()
+    tx = data.find_transaction(tx_id)
+    if tx is None:
+        abort(404)
+
+    # 提案パターンをルール化したときの反映対象（手動修正済みは除く）
+    same_merchant = preview_rule_targets(data, merchant_key(tx.merchant_normalized), tx.id)
+    return render_template(
+        'edit.html',
+        tx=tx,
+        allocations=data.allocations_for(tx_id),
+        categories=data.category_names(),
+        rule=match_rule(data.merchant_rules, tx.merchant_normalized),
+        same_merchant_count=len(same_merchant),
+        back=safe_back(),
+    )
+
+
+@bp.route('/transactions/<tx_id>/rule-preview')
+def rule_preview(tx_id: str) -> dict[str, int]:
+    """入力中のルールパターンで登録した場合に反映される他の明細の件数を返す（編集画面の件数表示用。Flask が JSON にする）
+
+    Args:
+        tx_id: 編集中の明細 ID
+    """
+    data = load_data()
+    if data.find_transaction(tx_id) is None:
+        abort(404)
+
+    pattern = request.args.get('pattern', '')
+    return {'count': len(preview_rule_targets(data, pattern, tx_id))}
+
+
+@bp.route('/transactions/<tx_id>/category', methods=['POST'])
+def update_category(tx_id: str) -> WerkzeugResponse:
+    """カテゴリ変更（scope=once なら今回だけ、always ならルール登録してパターンに一致する明細にも反映）
+
+    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う。
+    フォームに kind があればこの明細の収支も変える（ルールには載せない。要確認画面のフォームには無いので変えない）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    category = request.form.get('category', '').strip()
+    scope = request.form.get('scope', 'once')
+    memo = request.form.get('memo', '').strip()
+    rule_pattern = request.form.get('rule_pattern', '').strip()
+    kind = request.form.get('kind', '')
+    back = safe_back()
+
+    def mutate(data: LedgerData) -> tuple[int, str, bool, str]:
+        tx = data.find_transaction(tx_id)
+        if tx is None:
+            abort(404)
+
+        if category not in data.category_names():
+            raise ValueError(f'不明なカテゴリです: {category}')
+
+        if kind and kind not in KIND_LABELS:
+            raise ValueError(f'不明な収支です: {kind}')
+
+        changed_kind = kind if kind and kind != tx.kind else ''  # 収支を変えたときだけメッセージに出す
+        tx.kind = kind or tx.kind
+        tx.category = category
+        tx.confidence = None
+        tx.classification_source = SOURCE_MANUAL
+        tx.memo = memo
+        if scope != 'always':
+            return 0, '', True, changed_kind
+
+        rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
+        targets = [
+            o for o in rule_targets(data.transactions, data.merchant_rules, rule, tx.id) if o.category != category
+        ]
+        for other in targets:
+            other.category = category
+            other.confidence = None
+            other.classification_source = SOURCE_RULE
+
+        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None, changed_kind
+
+    try:
+        applied_others, pattern, matches_self, changed_kind = svc().repo.update(mutate)
+    except ValueError as exc:  # 不明なカテゴリなど
+        flash(str(exc), 'error')
+        return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
+
+    if scope == 'always':
+        msg = f'カテゴリを「{category}」に変更し、ルール「{pattern}」を登録しました。'
+        if applied_others:
+            msg += f' 一致する {applied_others} 件にも適用しました。'
+    else:
+        msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
+
+    if changed_kind:
+        msg += f' 収支を「{KIND_LABELS[changed_kind]}」に変更しました。'
+
+    flash(msg, 'success')
+    if not matches_self:
+        flash(f'ルール「{pattern}」はこの明細の加盟店名に一致しません。パターンを確認してください。', 'warning')
+
+    return redirect(back)
+
+
+@bp.route('/transactions/<tx_id>/allocations', methods=['POST'])
+def update_allocations(tx_id: str) -> WerkzeugResponse:
+    """内訳を保存する（合計が明細金額と一致しなければエラー表示）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    edit_url = url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
+
+    def mutate(data: LedgerData) -> bool:
+        tx = data.find_transaction(tx_id)
+        if tx is None:
+            abort(404)
+
+        items = parse_allocation_form()  # 金額が数値でなければ ValueError（保存前に止まる）
+        replace_allocations(data, tx_id, validate_allocations(tx, items, data.category_names()))
+        return bool(items)
+
+    return save_and_redirect(
+        mutate, lambda saved: '内訳を保存しました。' if saved else '内訳を削除しました。', edit_url
+    )
+
+
+@bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])
+def clear_allocations(tx_id: str) -> WerkzeugResponse:
+    """内訳をすべて削除する
+
+    Args:
+        tx_id: 明細 ID
+    """
+
+    def mutate(data: LedgerData) -> None:
+        if data.find_transaction(tx_id) is None:
+            abort(404)
+
+        replace_allocations(data, tx_id, [])
+
+    return save_and_redirect(
+        mutate, lambda _: '内訳を削除しました。', url_for('ledger.edit_transaction', tx_id=tx_id, back=safe_back())
+    )

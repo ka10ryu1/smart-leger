@@ -452,6 +452,22 @@ def test_rule_pattern_not_matching_transaction_warns(client: FlaskClient, fixtur
     assert 'この明細の加盟店名に一致しません' in body
 
 
+def test_commit_and_allocation_forms_prevent_double_submit(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """取込確定と内訳のフォームは data-submit-once で app.js の二重送信防止を使う（取込確定は送信中の文言も持つ）
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    preview = upload(client, fixture_csv_bytes)
+    assert re.search(r'action="/import/commit"[^>]*data-submit-once>', preview)
+    assert 'type="submit" data-busy-label="分類・保存中…">' in preview
+
+    import_csv(client, fixture_csv_bytes)
+    edit_html = client.get(f'/transactions/{first_tx_id(client, "サンプルスーパー")}/edit').get_data(as_text=True)
+    assert re.search(r'id="alloc-form"[^>]*data-submit-once>', edit_html)
+
+
 def test_always_scope_respects_more_specific_existing_rule(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
     """部分一致パターンで登録しても、より具体的な既存ルールが勝つ明細は上書きされない（件数表示も同じ判定）
 

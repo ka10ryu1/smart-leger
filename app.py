@@ -65,7 +65,7 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
     Args:
         url: 'http://127.0.0.1:5000' のようなベース URL
         timeout: 接続タイムアウト秒
-        app_id: /health が返す app の値（routes.health と一致させる）
+        app_id: /health が返す app の値（routes.common.health と一致させる）
 
     Returns:
         True: Smart Ledger が応答した /

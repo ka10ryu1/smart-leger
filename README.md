@@ -316,7 +316,15 @@ smart-ledger/
 │  ├─ __init__.py             # create_app
 │  ├─ config.py               # .env / 環境変数の読み込み
 │  ├─ models.py               # Transaction / MerchantRule / Category / ImportRecord / Allocation
-│  ├─ routes.py               # Flask ルーティング(画面)
+│  ├─ routes/                 # Flask ルーティング(画面ごとのモジュール。Blueprint は 1 つ)
+│  │  ├─ common.py            # Blueprint・フィルタ・CSRF 対策・エラー画面・共通ヘルパー
+│  │  ├─ dashboard.py         # ダッシュボード・年間表
+│  │  ├─ transactions.py      # 明細一覧・要確認
+│  │  ├─ edit.py              # 明細編集(カテゴリ・ルール・内訳)
+│  │  ├─ manual.py            # 手動明細の追加・削除
+│  │  ├─ imports.py           # CSV 取込
+│  │  ├─ rules.py             # 加盟店ルール
+│  │  └─ categories.py        # カテゴリ管理
 │  ├─ logging_setup.py        # ログ設定(カード番号・APIキーのマスク)
 │  ├─ services/
 │  │  ├─ csv_parser.py        # ヘッダー検出・文字コード判定・row_key
