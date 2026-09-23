@@ -218,7 +218,11 @@ def test_previous_allocation_source_picks_latest_earlier_same_merchant(categorie
 
     data.transactions.append(make_tx('aug2', date(2026, 8, 27), 10000, '食費', 'KYASH 8ガツブン'))
     data.allocations.append(Allocation('aug2', '交通', 10000))
-    assert source_id('sep') == 'aug2'  # 利用日が同じなら後から登録した明細
+    assert source_id('sep') == 'aug2'  # 利用日と取込日時が同じなら後ろの行
+
+    data.transactions[0].imported_at = '2026-09-01 10:00:00'  # jul の位置に 8/27 の明細を後から取り込んだ扱いにする
+    data.transactions[0].usage_date = date(2026, 8, 27)
+    assert source_id('sep') == 'jul'  # 利用日が同じなら行の位置より取込日時が新しいものを優先する
 
 
 def test_copy_previous_allocations_moves_difference_to_last_row(categories: list[str]) -> None:

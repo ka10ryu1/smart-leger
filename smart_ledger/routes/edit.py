@@ -59,16 +59,12 @@ def edit_transaction(tx_id: str) -> str:
 
     # 提案パターンをルール化したときの反映対象（手動修正済みは除く）
     same_merchant = preview_rule_targets(data, merchant_key(tx.merchant_normalized), tx.id)
-    allocations = data.allocations_for(tx_id)
-    previous = copy_previous_allocations(data, tx)
-    copy_requested = request.args.get('copy_allocations') == '1'
     return render_template(
         'edit.html',
         tx=tx,
-        allocations=allocations,
-        alloc_rows=previous.items if previous and copy_requested else allocations,
-        previous_allocations=previous,
-        copy_requested=copy_requested,
+        allocations=data.allocations_for(tx_id),
+        prev=copy_previous_allocations(data, tx),
+        copy_requested=request.args.get('copy_allocations') == '1',
         categories=data.category_names(),
         rule=match_rule(data.merchant_rules, tx.merchant_normalized),
         same_merchant_count=len(same_merchant),

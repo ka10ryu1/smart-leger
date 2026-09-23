@@ -81,7 +81,7 @@ def previous_allocation_source(data: LedgerData, tx: Transaction) -> Transaction
 
     加盟店キーは請求月などを除いて大文字小文字を無視して比べる（「7ガツブン KYASH」と「8ガツブン KYASH」は同じ加盟店）。
     収支（kind）と金額の符号が tx と同じ明細に限る（返金の内訳を通常の支出に写したり、その逆をしたりしない）。
-    利用日が同じ明細が複数あれば、後から登録したものを選ぶ
+    利用日が同じ明細が複数あれば、取込日時が新しいもの（同じ取込なら後ろの行）を選ぶ
 
     Args:
         data: 対象の LedgerData
@@ -102,8 +102,8 @@ def previous_allocation_source(data: LedgerData, tx: Transaction) -> Transaction
         and (t.amount < 0) == (tx.amount < 0)
         and merchant_key(t.merchant_normalized.casefold()) == key
     ]
-    # max は同じ値なら先に見たものを返すので、逆順に渡して後から登録した明細を優先する
-    return max(reversed(candidates), key=lambda t: t.usage_date, default=None)
+    # 取込日時が同じ（同じ CSV の明細）なら max は先に見たものを返すので、逆順に渡して後ろの行を優先する
+    return max(reversed(candidates), key=lambda t: (t.usage_date, t.imported_at), default=None)
 
 
 def copy_previous_allocations(data: LedgerData, tx: Transaction) -> AllocationCopy | None:
