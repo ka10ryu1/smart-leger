@@ -220,6 +220,7 @@ __marimo__/
 # ---- Smart Ledger ----
 .env
 .venv/
+.venv-windows/
 venv/
 data/
 backup/

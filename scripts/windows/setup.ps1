@@ -6,6 +6,8 @@ param([switch]$NoPause)
 $ErrorActionPreference = "Stop"
 # Resolve-Path は UNC パス (\\wsl.localhost\...) に "Microsoft.PowerShell.Core\FileSystem::" を付け ".." も残すため GetFullPath で正規化する
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
+# \\wsl.localhost\... など UNC 上のフォルダは WSL 側の .venv(Linux 用)と共有されるため、Windows 用の環境を別名で作る
+$venvName = if ($projectRoot -like "\\*") { ".venv-windows" } else { ".venv" }
 Set-Location -LiteralPath $projectRoot
 
 # --- ログ(ウィンドウがすぐ閉じても原因を追えるように、出力をファイルにも残す) -----
@@ -67,13 +69,14 @@ try {
     }
     Write-Host "uv を使用します: $($uv.Source)"
     Write-Host "Python 3.12 と依存パッケージを同期しています(初回は数分かかることがあります)..."
+    $env:UV_PROJECT_ENVIRONMENT = Join-Path $projectRoot $venvName
     # uv は進捗を stderr に出すため、ネイティブコマンド実行中は Stop にしない
     $ErrorActionPreference = "Continue"
     & $uv.Source sync --locked --python 3.12
     $uvExit = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
     if ($uvExit -ne 0) { Fail "uv sync に失敗しました(終了コード $uvExit)。uv が古い場合は uv self update (公式インストーラー版) または winget upgrade --id=astral-sh.uv -e (winget 版) で更新し、ネットワーク接続とプロキシ設定も確認してください" }
-    $venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+    $venvPython = Join-Path $projectRoot "$venvName\Scripts\python.exe"
     if (-not (Test-Path $venvPython)) { Fail "仮想環境の python.exe が見つかりません: $venvPython" }
 
     # --- ディレクトリ・設定ファイル ------------------------------------------

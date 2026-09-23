@@ -70,7 +70,7 @@ cd smart-ledger
 `setup.cmd` は内部の PowerShell スクリプトを呼び出し、次を行います。利用者が `.ps1` を直接選ぶ必要はありません。
 
 1. uv を検出
-2. Python 3.12 と仮想環境 `.venv` を用意
+2. Python 3.12 と仮想環境 `.venv` を用意（`\\wsl.localhost\...` などネットワーク上のフォルダでは、WSL 側の `.venv` と衝突しないよう `.venv-windows` を使う）
 3. `uv.lock` に従って依存パッケージを同期
 4. `data/`、`data/backup/`、`data/staging/`、`logs/` を作成
 5. `.env` が無ければ `.env.example` からコピー
@@ -417,7 +417,7 @@ uv run --locked python tools\insert_block_blank_lines.py smart_ledger tests tool
 次のものは `.gitignore` で除外されており、コミットされません。
 
 - `.env`(API キー)
-- `.venv/`
+- `.venv/`、`.venv-windows/`
 - `data/`(household.xlsx、バックアップ、staging)
 - `logs/`
 - `*.xlsx`、`*.csv`(実際のカード明細)
