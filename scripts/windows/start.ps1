@@ -2,7 +2,8 @@
 param([switch]$NoPause)
 
 $ErrorActionPreference = "Stop"
-$projectRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot "..\..")).Path
+# Resolve-Path は UNC パス (\\wsl.localhost\...) に "Microsoft.PowerShell.Core\FileSystem::" を付け ".." も残すため GetFullPath で正規化する
+$projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
 Set-Location -LiteralPath $projectRoot
 
 function Finish([int]$code) {

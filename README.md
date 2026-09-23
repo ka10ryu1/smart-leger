@@ -83,7 +83,7 @@ cd smart-ledger
 - **「Smart Ledger を起動します」の後、何分も反応がない**: `\\wsl.localhost\...` など WSL やネットワーク上のフォルダから起動すると、`.venv` のライブラリ読み込みがファイル共有越しになり、起動に 1〜3 分かかります。Windows のローカルディスクに `git clone` して `setup.cmd` → `start.cmd` を実行してください
 - **「デジタル署名されていません」「スクリプトの実行が無効」**: ZIP でダウンロードしたファイルはブロック属性が付きます。フォルダ内で `Get-ChildItem -Recurse | Unblock-File` を実行してから `setup.cmd` を再実行してください。`git clone` したファイルには付きません
 - **uv が見つかりません**: `setup.cmd` の確認で `Y` または Enter キーを押すと winget で自動インストールされます。`winget` 自体が見つからない場合は、Microsoft Store の App Installer を更新してください
-- **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら `winget upgrade --id=astral-sh.uv -e` で更新してください。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
+- **uv sync に失敗**: `uv --version` でバージョンを確認し、0.12.17 未満なら更新してください（公式インストーラーで入れた場合は `uv self update`、winget で入れた場合は `winget upgrade --id=astral-sh.uv -e`）。解消しない場合はネットワーク・プロキシ設定を確認してください。会社ネットワークでは PowerShell の `HTTPS_PROXY` 環境変数など、組織指定のプロキシ設定が必要な場合があります
 
 ### 3. .env を設定
 

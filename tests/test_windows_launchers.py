@@ -38,6 +38,7 @@ def test_setup_uses_locked_uv_environment() -> None:
     assert 'Read-Host "uv が見つかりません。winget でインストールしますか？ [Y/n]"' in setup
     assert 'install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements' in setup
     assert 'winget upgrade --id=astral-sh.uv -e' in setup
+    assert 'uv self update' in setup
     assert 'pip install' not in setup
 
 
