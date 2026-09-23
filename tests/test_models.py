@@ -7,7 +7,7 @@ from datetime import date, datetime
 import pytest
 
 from smart_ledger.constants import SOURCE_ERROR, SOURCE_JEV, SOURCE_MANUAL, SOURCE_RULE
-from smart_ledger.models import Transaction, to_date
+from smart_ledger.models import Allocation, LedgerData, Transaction, to_date
 
 
 @pytest.mark.parametrize(
@@ -59,3 +59,18 @@ def test_transaction_needs_review_states(category: str, source: str, confidence:
     """
     tx = Transaction('tx', date(2026, 8, 1), 'A', 'A', 100, category, confidence, source)
     assert tx.needs_review(0.85) is expected
+
+
+def test_allocations_by_transaction_groups_in_saved_order() -> None:
+    """内訳を明細 ID ごとに保存順でまとめ、内訳の無い明細はキーに含めない"""
+    data = LedgerData(
+        transactions=[
+            Transaction('a', date(2026, 8, 1), 'A', 'A', 300),
+            Transaction('b', date(2026, 8, 1), 'B', 'B', 1),
+        ],
+        allocations=[Allocation('a', '食費', 100), Allocation('c', '外食', 5), Allocation('a', '外食', 200)],
+    )
+    grouped = data.allocations_by_transaction()
+    assert [(x.category, x.amount) for x in grouped['a']] == [('食費', 100), ('外食', 200)]
+    assert 'b' not in grouped
+    assert list(grouped) == ['a', 'c']

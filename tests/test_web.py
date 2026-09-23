@@ -630,3 +630,86 @@ def test_dashboard_category_links_filter_by_kind(client: FlaskClient, fixture_ba
     assert f'href="{income_path.replace("&", "&amp;")}"' in html
     assert '1 件 / 支出 <strong>70,000 円</strong></p>' in client.get(expense_path).get_data(as_text=True)
     assert '収入 <strong class="income">+70,000 円</strong>' in client.get(income_path).get_data(as_text=True)
+
+
+def add_split_transactions(client: FlaskClient) -> None:
+    """内訳のある明細（食費 1,000 円 → 日用品・買い物 600 + 外食 400）と内訳の無い外食 300 円を登録する
+
+    Args:
+        client: テストクライアント
+    """
+
+    def mutate(data: LedgerData) -> None:
+        data.transactions.append(Transaction('tx_split', date(2026, 8, 5), 'KYASH', 'KYASH', 1000, '食費'))
+        data.transactions.append(Transaction('tx_plain', date(2026, 8, 6), 'CAFE', 'CAFE', 300, '外食'))
+        data.allocations.append(Allocation('tx_split', '日用品・買い物', 600, '洗剤'))
+        data.allocations.append(Allocation('tx_split', '外食', 400, 'ランチ'))
+
+    client.application.extensions['smart_ledger'].repo.update(mutate)
+
+
+def test_allocation_rows_are_listed(client: FlaskClient) -> None:
+    """明細一覧とダッシュボードの最近の明細に、内訳のカテゴリ・金額・メモの行が出る（スマホ用は折りたたみ）
+
+    Args:
+        client: テストクライアント
+    """
+    add_split_transactions(client)
+    for path in ('/?month=2026-08', '/transactions?month=2026-08'):
+        html = client.get(path).get_data(as_text=True)
+        assert html.count('<tr class="tx-alloc') == 2  # PC: 明細行の下に内訳 2 行
+        assert '<td class="alloc-memo">洗剤</td>' in html and '<td class="alloc-memo">ランチ</td>' in html
+        assert '600 円' in html and '400 円' in html
+        assert '<details class="tx-card-alloc" >' in html  # スマホ: 絞り込みなしでは閉じている
+        assert '<summary>内訳 2 件</summary>' in html
+        assert html.count('<details') == 1  # 内訳の無い明細には折りたたみを出さない
+
+
+def test_category_filter_matches_allocation_categories(client: FlaskClient) -> None:
+    """カテゴリの絞り込みは内訳のカテゴリにも一致させ、合計は明細金額で数える（内訳の金額を足し込まない）
+
+    Args:
+        client: テストクライアント
+    """
+    add_split_transactions(client)
+
+    def summary(category: str) -> str:
+        """カテゴリで絞り込んだ明細一覧の HTML を返す
+
+        Args:
+            category: 絞り込むカテゴリ
+        """
+        return client.get(f'/transactions?month=2026-08&category={category}').get_data(as_text=True)
+
+    dining = summary('外食')  # 内訳の外食 400 と明細自身の外食 300 の両方が一致する
+    assert 'tx_split' in dining and 'tx_plain' in dining
+    assert '2 件 / 支出 <strong>1,300 円</strong>' in dining
+    assert '内訳の金額は足し込みません' in dining
+    assert '<tr class="tx-alloc last hit">' in dining and dining.count('hit"') == 2  # 一致した内訳行だけ強調する
+    assert '<details class="tx-card-alloc" open>' in dining
+
+    daily = summary('日用品・買い物')  # 内訳だけに出てくるカテゴリ
+    assert 'tx_split' in daily and 'tx_plain' not in daily
+    assert '1 件 / 支出 <strong>1,000 円</strong>' in daily
+
+    food = summary('食費')  # 明細自身のカテゴリは従来どおり一致する
+    assert 'tx_split' in food and '1 件 / 支出 <strong>1,000 円</strong>' in food
+    assert '<details class="tx-card-alloc" >' in food  # 内訳に一致しなければ開かない
+    assert '内訳の金額は足し込みません' in food  # 明細自身のカテゴリで一致しても内訳のある明細なら注記を出す
+
+    plain = summary('外食&q=CAFE')  # 内訳のある明細が含まれなければ注記は出さない
+    assert '1 件 / 支出 <strong>300 円</strong>' in plain
+    assert '内訳の金額は足し込みません' not in plain
+    assert 'tx_split' not in summary('交通')
+
+
+def test_annual_hint_explains_list_totals_use_transaction_amount(client: FlaskClient) -> None:
+    """年間表の注記は、明細一覧が内訳のカテゴリにも一致し合計は明細金額で数えることを説明する
+
+    Args:
+        client: テストクライアント
+    """
+    add_split_transactions(client)
+    html = client.get('/annual?year=2026').get_data(as_text=True)
+    assert '明細一覧は内訳のカテゴリにも一致しますが、件数・合計は明細金額で数えるため' in html
+    assert '明細自身のカテゴリで絞り込む' not in html

@@ -35,5 +35,8 @@
   <a class="btn" href="{{ url_for('ledger.transactions') }}">クリア</a>
 </form>
 <p class="summary-line">{{ transactions|length }} 件 / 支出 <strong>{{ total|yen }} 円</strong>{% if income_total %} / 収入 <strong class="income">+{{ income_total|yen }} 円</strong>{% endif %}</p>
-{{ tx_list(transactions, alloc_ids) }}
+{% if filters.category and transactions|selectattr('id', 'in', allocs)|list %}
+<p class="hint">カテゴリの絞り込みは内訳のカテゴリにも一致します。内訳のある明細も件数・合計は明細金額で数え、内訳の金額は足し込みません。</p>
+{% endif %}
+{{ tx_list(transactions, allocs, highlight=filters.category) }}
 {% endblock %}

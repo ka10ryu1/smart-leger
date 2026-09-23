@@ -119,6 +119,13 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .tx-table tr.review td { background: #fffbeb; }
 .tx-table tr.dup td { color: var(--muted); }
 .tx-table .merchant { word-break: break-all; }
+/* 内訳行: 明細行とひとまとまりに見えるよう間の罫線を消し、メモ欄をインデントする */
+.tx-table tr.has-alloc td, .tx-table tr.tx-alloc td { border-bottom: 0; }
+.tx-table tr.tx-alloc td { padding-top: 0.1rem; padding-bottom: 0.1rem; font-size: 0.82rem; color: var(--muted); }
+.tx-table tr.tx-alloc.last td { border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; }
+.tx-table tr.tx-alloc .alloc-memo { padding-left: 1.6rem; position: relative; word-break: break-all; }
+.tx-table tr.tx-alloc .alloc-memo::before { content: "└"; position: absolute; left: 0.6rem; }
+.tx-table tr.tx-alloc.hit td { color: var(--text); font-weight: 600; }
 .tx-cards { display: none; list-style: none; padding: 0; margin: 0; }
 .tx-card { border-bottom: 1px solid var(--line); padding: 0.6rem 0; }
 .tx-card a { color: inherit; display: block; }
@@ -130,6 +137,13 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
 .tx-merchant { flex: 1; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .tx-amount { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tx-amount small { font-weight: 400; color: var(--muted); margin-left: 0.1rem; }
+.tx-card-alloc { margin-top: 0.3rem; font-size: 0.85rem; }
+.tx-card-alloc summary { color: var(--muted); cursor: pointer; padding: 0.2rem 0; }
+.tx-card-alloc ul { list-style: none; padding: 0 0 0 1rem; margin: 0.2rem 0 0; }
+.tx-card-alloc li { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.15rem 0; }
+.tx-card-alloc .alloc-memo { flex: 1; min-width: 0; color: var(--muted); overflow-wrap: anywhere; }
+.tx-card-alloc .tx-amount { font-weight: 500; }
+.tx-card-alloc li.hit .tx-amount { font-weight: 700; }
 
 .review-list { list-style: none; padding: 0; margin: 0; }
 .review-head { display: flex; align-items: baseline; gap: 0.6rem; }

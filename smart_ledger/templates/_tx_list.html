@@ -1,6 +1,8 @@
 {# 明細リスト: PC ではテーブル、スマホではカード表示。CSS で切り替える。
-   収入(kind=income)は金額を + 付きで緑にし、カテゴリの横に「収入」バッジを出す #}
-{% macro tx_list(transactions, alloc_ids, back=None) -%}
+   収入(kind=income)は金額を + 付きで緑にし、カテゴリの横に「収入」バッジを出す。
+   内訳(allocs: 明細 ID → 内訳のリスト)がある明細は、PC では明細行の下にインデントした内訳行を、
+   スマホではカードの下に折りたたみ(details)を出す。highlight に一致するカテゴリの内訳行は強調し、スマホでは開いておく #}
+{% macro tx_list(transactions, allocs, back=None, highlight=None) -%}
 {% if not transactions %}
   <p class="empty">明細がありません。</p>
 {% else %}
@@ -11,21 +13,33 @@
   </thead>
   <tbody>
   {% for t in transactions %}
-    <tr class="{{ 'review' if t.needs_review(threshold) }}">
+    {% set parts = allocs.get(t.id, []) %}
+    {% set review = 'review' if t.needs_review(threshold) else '' %}
+    <tr class="{{ [review, 'has-alloc' if parts]|select|join(' ') }}">
       <td class="nowrap">{{ t.usage_date.strftime('%Y/%m/%d') }}</td>
       <td class="merchant" title="{{ t.merchant_raw }}">{{ t.merchant_normalized }}{% if t.memo %}<span class="memo">{{ t.memo }}</span>{% endif %}</td>
       <td class="num {{ 'income' if t.is_income }}">{{ '+' if t.is_income }}{{ t.amount|yen }} 円</td>
-      <td>{% if t.is_income %}<span class="badge income">収入</span>{% endif %}<span class="badge cat">{{ t.category or '未分類' }}</span>{% if t.id in alloc_ids %}<span class="badge alloc">内訳</span>{% endif %}</td>
+      <td>{% if t.is_income %}<span class="badge income">収入</span>{% endif %}<span class="badge cat">{{ t.category or '未分類' }}</span>{% if parts %}<span class="badge alloc">内訳</span>{% endif %}</td>
       <td><span class="badge src src-{{ t.classification_source }}">{{ t.classification_source|source_label }}</span></td>
       <td class="num">{{ t.confidence|conf }}</td>
       <td><a class="btn btn-sm" href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=back or request.full_path) }}">編集</a></td>
     </tr>
+    {% for a in parts %}
+    {% set cat = a.category or 'その他' %}
+    <tr class="{{ ['tx-alloc', review, 'last' if loop.last, 'hit' if highlight and cat == highlight]|select|join(' ') }}">
+      <td></td>
+      <td class="alloc-memo">{{ a.memo }}</td>
+      <td class="num {{ 'income' if t.is_income }}">{{ '+' if t.is_income }}{{ a.amount|yen }} 円</td>
+      <td colspan="4"><span class="badge cat">{{ cat }}</span></td>
+    </tr>
+    {% endfor %}
   {% endfor %}
   </tbody>
 </table>
 </div>
 <ul class="tx-cards">
   {% for t in transactions %}
+  {% set parts = allocs.get(t.id, []) %}
   <li class="tx-card {{ 'review' if t.needs_review(threshold) }}">
     <a href="{{ url_for('ledger.edit_transaction', tx_id=t.id, back=back or request.full_path) }}">
       <div class="tx-card-row">
@@ -36,11 +50,27 @@
       <div class="tx-card-row sub">
         {% if t.is_income %}<span class="badge income">収入</span>{% endif %}
         <span class="badge cat">{{ t.category or '未分類' }}</span>
-        {% if t.id in alloc_ids %}<span class="badge alloc">内訳</span>{% endif %}
+        {% if parts %}<span class="badge alloc">内訳</span>{% endif %}
         <span class="badge src src-{{ t.classification_source }}">{{ t.classification_source|source_label }}{% if t.confidence is not none %} {{ t.confidence|conf }}{% endif %}</span>
         {% if t.memo %}<span class="memo">{{ t.memo }}</span>{% endif %}
       </div>
     </a>
+    {% if parts %}
+    {% set hit = highlight and parts|map(attribute='category')|map('default', 'その他', true)|select('equalto', highlight)|list %}
+    <details class="tx-card-alloc" {{ 'open' if hit }}>
+      <summary>内訳 {{ parts|length }} 件</summary>
+      <ul>
+        {% for a in parts %}
+        {% set cat = a.category or 'その他' %}
+        <li class="{{ 'hit' if highlight and cat == highlight }}">
+          <span class="badge cat">{{ cat }}</span>
+          <span class="alloc-memo">{{ a.memo }}</span>
+          <span class="tx-amount {{ 'income' if t.is_income }}">{{ '+' if t.is_income }}{{ a.amount|yen }}<small>円</small></span>
+        </li>
+        {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
   </li>
   {% endfor %}
 </ul>
