@@ -99,3 +99,17 @@ def test_annual_exports_keep_refund_as_negative() -> None:
     assert table.monthly_totals[2] == table.total == -500
     assert parsed[1][3] == '-500' and parsed[-1][-1] == '-500'
     assert ws.cell(row=2, column=4).value == -500 and ws.cell(row=3, column=14).value == -500
+
+
+def test_annual_table_rows_appends_income_block() -> None:
+    """収入がある年は、月間総支出の下に収入のカテゴリ行・月間収入・収支が続く"""
+    data = sample_ledger()
+    data.transactions.append(Transaction('c', date(2026, 2, 5), 'C', 'C', 6000, '売電収入', kind='income'))
+    data.categories.append(Category('売電収入', 3))
+
+    rows = annual_table_rows(annual_table(data, 2026))
+    assert rows[-4] == ['月間総支出', 1000, 2500, *([0] * 10), 3500]
+    assert rows[-3] == ['売電収入', 0, 6000, *([0] * 10), 6000]
+    assert rows[-2] == ['月間収入', 0, 6000, *([0] * 10), 6000]
+    assert rows[-1] == ['収支', -1000, 3500, *([0] * 10), 2500]
+    assert all(len(r) == 14 for r in rows)

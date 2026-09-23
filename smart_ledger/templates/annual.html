@@ -15,13 +15,13 @@
 {% if not has_data %}
   <section class="card center">
     <h2>まだ明細がありません</h2>
-    <p>クレジットカード会社からダウンロードした CSV を取り込むと、ここに年間表が表示されます。</p>
+    <p>クレジットカード会社や銀行口座からダウンロードした CSV を取り込むと、ここに年間表が表示されます。</p>
     <a class="btn btn-primary" href="{{ url_for('ledger.import_page') }}">CSV を取り込む</a>
   </section>
 {% endif %}
 
 {% set active_months = table.monthly_counts|select|list|length %}
-<section class="stats stats-2">
+<section class="stats {{ 'stats-2' if not table.income_rows }}">
   <div class="stat card">
     <div class="stat-label">{{ table.year }}年の総支出</div>
     <div class="stat-value">{{ table.total|yen }}<small> 円</small></div>
@@ -34,9 +34,16 @@
       <div class="stat-sub">明細のある {{ active_months }} か月で割った値</div>
     {% else %}
       <div class="stat-value muted">-</div>
-      <div class="stat-sub">この年の明細はありません</div>
+      <div class="stat-sub">この年の支出はありません</div>
     {% endif %}
   </div>
+  {% if table.income_rows %}
+  <div class="stat card">
+    <div class="stat-label">{{ table.year }}年の収入 / 収支</div>
+    <div class="stat-value income">+{{ table.income_total|yen }}<small> 円</small></div>
+    <div class="stat-sub">収支 <strong class="{{ 'ok' if table.balance > 0 else 'up' if table.balance < 0 }}">{{ '+' if table.balance > 0 }}{{ table.balance|yen }}</strong> 円</div>
+  </div>
+  {% endif %}
 </section>
 
 <section class="card">
@@ -47,7 +54,7 @@
       <a class="btn btn-sm" href="{{ url_for('ledger.annual_export', fmt='xlsx', year=table.year) }}">Excel</a>
     </div>
   </div>
-  {% if table.rows %}
+  {% if table.rows or table.income_rows %}
   <p class="hint scroll-hint">表は横にスクロールできます。</p>
   <div class="annual-wrap">
   <table class="annual-table">
@@ -63,12 +70,25 @@
       <tr>
         <th>{{ r.category }}</th>
         {% for a in r.amounts %}
-        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category) }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category, kind='expense') }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
         {% endfor %}
         <td class="total">{{ r.total|yen }}</td>
       </tr>
     {% endfor %}
     </tbody>
+    {% if table.income_rows %}
+    <tbody class="income-rows">
+    {% for r in table.income_rows %}
+      <tr>
+        <th>{{ r.category }}</th>
+        {% for a in r.amounts %}
+        <td>{% if a %}<a href="{{ url_for('ledger.transactions', month=table.months[loop.index0], category=r.category, kind='income') }}">{{ a|yen }}</a>{% else %}<span class="muted">-</span>{% endif %}</td>
+        {% endfor %}
+        <td class="total">{{ r.total|yen }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    {% endif %}
     <tfoot>
       <tr>
         <th>月間総支出</th>
@@ -77,11 +97,23 @@
         {% endfor %}
         <td class="total">{{ table.total|yen }}</td>
       </tr>
+      {% if table.income_rows %}
+      <tr class="income-total">
+        <th>月間収入</th>
+        {% for t in table.monthly_incomes %}<td>{% if t %}{{ t|yen }}{% else %}<span class="muted">-</span>{% endif %}</td>{% endfor %}
+        <td class="total">{{ table.income_total|yen }}</td>
+      </tr>
+      <tr>
+        <th>収支</th>
+        {% for b in table.monthly_balances %}<td class="{{ 'ok' if b > 0 else 'up' if b < 0 }}">{% if b %}{{ b|yen }}{% else %}<span class="muted">-</span>{% endif %}</td>{% endfor %}
+        <td class="total {{ 'ok' if table.balance > 0 else 'up' if table.balance < 0 }}">{{ table.balance|yen }}</td>
+      </tr>
+      {% endif %}
     </tfoot>
   </table>
   </div>
-  <p class="hint">カテゴリの金額を押すと該当月・カテゴリの明細一覧、月間総支出を押すとその月のダッシュボードを開きます。
-    内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、月間総支出には 1 回だけ計上しています(明細一覧は明細自身のカテゴリで絞り込むため、内訳で分けたカテゴリの金額は一覧と一致しないことがあります)。</p>
+  <p class="hint">カテゴリの金額を押すと該当月・カテゴリの明細一覧、月間総支出を押すとその月のダッシュボードを開きます。収入のカテゴリは区切り線の下にまとめ、月間総支出には含めていません。
+    内訳(allocations)が登録された明細はカテゴリ別に分割して集計し、月間総支出には 1 回だけ計上しています(明細一覧は明細自身のカテゴリで絞り込むため、内訳で分けた金額や未分類の欄は一覧と一致しないことがあります)。</p>
   {% else %}
   <p class="empty">{{ table.year }}年の明細はありません。</p>
   {% endif %}

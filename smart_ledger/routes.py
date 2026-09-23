@@ -23,8 +23,10 @@ from werkzeug.wrappers import Response as WerkzeugResponse
 
 from .config import Config
 from .constants import (
+    BANK_CSV_TARGETS,
     CATEGORY_DESCRIPTIONS,
     FALLBACK_CATEGORY,
+    KIND_LABELS,
     MONTH_PATTERN,
     SOURCE_LABELS,
     SOURCE_MANUAL,
@@ -41,6 +43,8 @@ from .services.aggregation import (
     monthly_summary,
     monthly_trend,
     shift_month,
+    total_income,
+    total_spending,
     transactions_in_month,
 )
 from .services.allocations import AllocationInput, replace_allocations, validate_allocations
@@ -183,6 +187,8 @@ def inject_globals() -> dict[str, object]:
         'dropbox_enabled': config.dropbox_path is not None,
         'jev_enabled': bool(config.typesafe_api_key),
         'excel_path': str(config.excel_path),
+        'kind_labels': KIND_LABELS,
+        'bank_target_categories': [category for _, category in BANK_CSV_TARGETS],  # 取込画面の説明文に使う
     }
 
 
@@ -342,7 +348,7 @@ def annual_export(fmt: str) -> Response:
 
 @bp.route('/transactions')
 def transactions() -> str:
-    """明細一覧（月・カテゴリ・分類元・加盟店名で絞り込み）"""
+    """明細一覧（月・収支・カテゴリ・分類元・加盟店名で絞り込み）"""
     data = load_data()
     month = request.args.get('month', '').strip()
     if month and not MONTH_PATTERN.match(month):
@@ -351,9 +357,16 @@ def transactions() -> str:
     category = request.args.get('category', '').strip()
     query = request.args.get('q', '').strip().casefold()
     source = request.args.get('source', '').strip()
+    kind = request.args.get('kind', '').strip()
+    if kind not in KIND_LABELS:
+        kind = ''
+
     txs = list(data.transactions)
     if month:
         txs = transactions_in_month(txs, month)
+
+    if kind:
+        txs = [t for t in txs if t.kind == kind]
 
     if category:
         txs = [t for t in txs if (t.category or UNCLASSIFIED_LABEL) == category]
@@ -373,10 +386,17 @@ def transactions() -> str:
     return render_template(
         'transactions.html',
         transactions=txs,
-        total=sum(t.amount for t in txs),
+        total=total_spending(txs),
+        income_total=total_income(txs),
         months=available_months(data.transactions),
         categories=names,
-        filters={'month': month, 'category': category, 'q': request.args.get('q', ''), 'source': source},
+        filters={
+            'month': month,
+            'category': category,
+            'q': request.args.get('q', ''),
+            'source': source,
+            'kind': kind,
+        },
         alloc_ids={a.transaction_id for a in data.allocations},
     )
 
@@ -451,7 +471,8 @@ def save_and_redirect[T](
 def update_category(tx_id: str) -> WerkzeugResponse:
     """カテゴリ変更（scope=once なら今回だけ、always ならルール登録してパターンに一致する明細にも反映）
 
-    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う
+    ルールのパターンはフォームの rule_pattern（省略時は請求月などを除いた加盟店キー）を使う。
+    フォームに kind があればこの明細の収支も変える（ルールには載せない。要確認画面のフォームには無いので変えない）
 
     Args:
         tx_id: 明細 ID
@@ -460,9 +481,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
     scope = request.form.get('scope', 'once')
     memo = request.form.get('memo', '').strip()
     rule_pattern = request.form.get('rule_pattern', '').strip()
+    kind = request.form.get('kind', '')
     back = safe_back()
 
-    def mutate(data: LedgerData) -> tuple[int, str, bool]:
+    def mutate(data: LedgerData) -> tuple[int, str, bool, str]:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
@@ -470,12 +492,17 @@ def update_category(tx_id: str) -> WerkzeugResponse:
         if category not in data.category_names():
             raise ValueError(f'不明なカテゴリです: {category}')
 
+        if kind and kind not in KIND_LABELS:
+            raise ValueError(f'不明な収支です: {kind}')
+
+        changed_kind = kind if kind and kind != tx.kind else ''  # 収支を変えたときだけメッセージに出す
+        tx.kind = kind or tx.kind
         tx.category = category
         tx.confidence = None
         tx.classification_source = SOURCE_MANUAL
         tx.memo = memo
         if scope != 'always':
-            return 0, '', True
+            return 0, '', True, changed_kind
 
         rule = upsert_rule(data, rule_pattern or merchant_key(tx.merchant_normalized), category)
         targets = [
@@ -486,10 +513,10 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             other.confidence = None
             other.classification_source = SOURCE_RULE
 
-        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None
+        return len(targets), rule.merchant_pattern, match_rule([rule], tx.merchant_normalized) is not None, changed_kind
 
     try:
-        applied_others, pattern, matches_self = svc().repo.update(mutate)
+        applied_others, pattern, matches_self, changed_kind = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(url_for('ledger.edit_transaction', tx_id=tx_id, back=back))
@@ -500,6 +527,9 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             msg += f' 一致する {applied_others} 件にも適用しました。'
     else:
         msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
+
+    if changed_kind:
+        msg += f' 収支を「{KIND_LABELS[changed_kind]}」に変更しました。'
 
     flash(msg, 'success')
     if not matches_self:
@@ -616,6 +646,12 @@ def import_commit() -> WerkzeugResponse:
         f'{result.imported} 件を取り込みました(重複スキップ {result.skipped_duplicates} 件、'
         f'ルール一致 {result.rule_matched} 件、自動採用 {result.auto_accepted} 件、要確認 {result.needs_review} 件)。'
     )
+    if result.income_count:
+        msg += f' うち {result.income_count} 件は収入として記録しました。'
+
+    if result.added_categories:
+        msg += f' カテゴリ「{"」「".join(result.added_categories)}」を追加しました。'
+
     if result.jev_errors:
         msg += f' Jev 分類エラー {result.jev_errors} 件は「その他」として要確認に入っています。'
 

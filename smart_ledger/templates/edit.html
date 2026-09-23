@@ -8,8 +8,8 @@
   <dl class="tx-detail">
     <dt>利用日</dt><dd>{{ tx.usage_date.strftime('%Y/%m/%d') }}</dd>
     <dt>加盟店</dt><dd>{{ tx.merchant_normalized }}<br><small class="muted">元データ: {{ tx.merchant_raw }}</small></dd>
-    <dt>金額</dt><dd class="big">{{ tx.amount|yen }} 円</dd>
-    <dt>カード</dt><dd>{{ tx.card or '-' }}</dd>
+    <dt>金額</dt><dd class="big {{ 'income' if tx.is_income }}">{{ '+' if tx.is_income }}{{ tx.amount|yen }} 円{% if tx.is_income %}<span class="badge income">収入</span>{% endif %}</dd>
+    <dt>カード / 口座</dt><dd>{{ tx.card or '-' }}</dd>
     <dt>現在のカテゴリ</dt><dd><span class="badge cat">{{ tx.category or '未分類' }}</span> <span class="badge src src-{{ tx.classification_source }}">{{ tx.classification_source|source_label }}{% if tx.confidence is not none %} {{ tx.confidence|conf }}{% endif %}</span></dd>
     {% if rule %}<dt>適用ルール</dt><dd>「{{ rule.merchant_pattern }}」→ {{ rule.category }}</dd>{% endif %}
   </dl>
@@ -22,6 +22,11 @@
     <label>カテゴリ
       <select name="category" required>
         {% for c in categories %}<option value="{{ c }}" {{ 'selected' if c == tx.category }}>{{ c }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>収支
+      <select name="kind">
+        {% for value, label in kind_labels.items() %}<option value="{{ value }}" {{ 'selected' if value == tx.kind }}>{{ label }}</option>{% endfor %}
       </select>
     </label>
     <div class="radio-group">

@@ -8,17 +8,20 @@ import pytest
 
 from smart_ledger.models import Allocation, Category, LedgerData, Transaction
 from smart_ledger.services.aggregation import (
+    AnnualTable,
     annual_table,
     available_years,
     monthly_summary,
+    monthly_trend,
     shift_month,
+    total_income,
     total_spending,
     transactions_in_month,
 )
 from smart_ledger.services.allocations import AllocationError, AllocationInput, validate_allocations
 
 
-def make_tx(id_: str, d: date, amount: int, category: str, merchant: str = '店') -> Transaction:
+def make_tx(id_: str, d: date, amount: int, category: str, merchant: str = '店', kind: str = 'expense') -> Transaction:
     """テスト用の明細を作る
 
     Args:
@@ -27,9 +30,16 @@ def make_tx(id_: str, d: date, amount: int, category: str, merchant: str = '店'
         amount: 金額
         category: カテゴリ
         merchant: 加盟店名
+        kind: expense / income
     """
     return Transaction(
-        id=id_, usage_date=d, merchant_raw=merchant, merchant_normalized=merchant, amount=amount, category=category
+        id=id_,
+        usage_date=d,
+        merchant_raw=merchant,
+        merchant_normalized=merchant,
+        amount=amount,
+        category=category,
+        kind=kind,
     )
 
 
@@ -197,3 +207,85 @@ def test_annual_table_empty_year_and_available_years(categories: list[str]) -> N
     assert available_years([]) == []
     table = annual_table(data, 2025)
     assert table.rows == [] and table.total == 0 and table.monthly_totals == [0] * 12
+
+
+def test_income_is_excluded_from_spending(categories: list[str]) -> None:
+    """収入は総支出・前月比・推移に含めず、収入と収支として別に集計する
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_ledger(
+        [
+            make_tx('a', date(2026, 8, 10), 1000, '食費'),
+            make_tx('b', date(2026, 9, 10), 3000, '食費'),
+            make_tx('c', date(2026, 9, 5), 7000, '売電収入', '振込*トウデンPG コウニユウ', kind='income'),
+        ],
+        categories,
+    )
+    current = transactions_in_month(data.transactions, '2026-09')
+    assert total_spending(current) == 3000 and total_income(current) == 7000
+
+    summary = monthly_summary(data, '2026-09')
+    assert (summary.total, summary.income, summary.balance) == (3000, 7000, 4000)
+    assert summary.prev_total == 1000 and summary.diff == 2000  # 前月比は支出どうしで比べる
+    assert (summary.transaction_count, summary.income_count) == (1, 1)  # 総支出の件数に収入は混ぜない
+    assert [c.category for c in summary.categories] == ['食費']
+    assert [(c.category, c.amount) for c in summary.income_categories] == [('売電収入', 7000)]
+    assert dict(monthly_trend(data, '2026-09', months=2)) == {'2026-08': 1000, '2026-09': 3000}
+
+
+def test_annual_table_separates_income_rows(categories: list[str]) -> None:
+    """年間表は収入を別の行に分け、月間総支出に混ぜない
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_ledger(
+        [
+            make_tx('a', date(2026, 2, 10), 5000, '住宅ローン'),
+            make_tx('b', date(2026, 3, 10), 5000, '住宅ローン'),
+            make_tx('c', date(2026, 2, 5), 6000, '売電収入', kind='income'),
+            make_tx('d', date(2026, 3, 5), 7000, '売電収入', kind='income'),
+        ],
+        categories,
+    )
+    table = annual_table(data, 2026)
+    assert [r.category for r in table.rows] == ['住宅ローン']
+    assert [r.category for r in table.income_rows] == ['売電収入']
+    assert table.monthly_totals[1:3] == [5000, 5000] and table.total == 10000
+    assert table.monthly_incomes[1:3] == [6000, 7000] and table.income_total == 13000
+    assert table.monthly_balances[1:3] == [1000, 2000] and table.balance == 3000
+    assert table.monthly_counts[1:3] == [1, 1]  # 件数（月平均の分母）は支出だけを数える
+
+
+def test_income_only_previous_month_counts_as_no_data(categories: list[str]) -> None:
+    """前月に収入しか無い場合は「前月のデータなし」扱いで、0 円との比較にしない
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    data = make_ledger(
+        [
+            make_tx('a', date(2026, 8, 5), 7000, '売電収入', kind='income'),
+            make_tx('b', date(2026, 9, 10), 3000, '食費'),
+        ],
+        categories,
+    )
+    summary = monthly_summary(data, '2026-09')
+    assert summary.prev_total is None and summary.diff is None
+    assert (summary.total, summary.transaction_count, summary.income_count) == (3000, 1, 0)
+
+
+def test_monthly_balances_length_matches_months_without_income() -> None:
+    """収入を持たない AnnualTable でも月ごとの収支は 12 か月分そろい、年間の収支と符合する"""
+    table = AnnualTable(
+        year=2026,
+        months=[f'2026-{m:02d}' for m in range(1, 13)],
+        rows=[],
+        monthly_totals=[100] * 12,
+        monthly_counts=[1] * 12,
+        total=1200,
+    )
+    assert table.monthly_balances == [-100] * 12
+    assert sum(table.monthly_balances) == table.balance == -1200

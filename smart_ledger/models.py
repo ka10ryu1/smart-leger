@@ -12,7 +12,14 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, ClassVar
 
-from .constants import CATEGORY_DESCRIPTIONS, DEFAULT_CATEGORIES, SOURCE_ERROR, SOURCE_JEV
+from .constants import (
+    CATEGORY_DESCRIPTIONS,
+    DEFAULT_CATEGORIES,
+    KIND_EXPENSE,
+    KIND_INCOME,
+    SOURCE_ERROR,
+    SOURCE_JEV,
+)
 
 
 def new_id(prefix: str) -> str:
@@ -95,7 +102,10 @@ def to_float_or_none(value: Any) -> float | None:
 
 @dataclass
 class Transaction:
-    """カード利用明細 1 行（transactions シートの 1 行に対応）"""
+    """明細 1 行（transactions シートの 1 行に対応）
+
+    カード利用明細のほか、銀行口座明細から取り込んだ支出・収入も同じ形で持つ
+    """
 
     COLUMNS: ClassVar[tuple[str, ...]] = (
         'id',
@@ -111,6 +121,7 @@ class Transaction:
         'imported_at',
         'row_key',
         'memo',
+        'kind',  # 収入対応で後から足した列。旧ファイルには無いので末尾に置く
     )
 
     id: str
@@ -126,6 +137,12 @@ class Transaction:
     imported_at: str = ''
     row_key: str = ''
     memo: str = ''
+    kind: str = KIND_EXPENSE
+
+    @property
+    def is_income(self) -> bool:
+        """収入の明細か（kind が income）"""
+        return self.kind == KIND_INCOME
 
     @property
     def month(self) -> str:
@@ -165,6 +182,7 @@ class Transaction:
             self.imported_at,
             self.row_key,
             self.memo,
+            self.kind,
         ]
 
     @classmethod
@@ -188,6 +206,7 @@ class Transaction:
             imported_at=to_str(row.get('imported_at')),
             row_key=to_str(row.get('row_key')),
             memo=to_str(row.get('memo')),
+            kind=to_str(row.get('kind')) or KIND_EXPENSE,  # kind 列が無い旧ファイルは支出として読む
         )
 
 

@@ -255,6 +255,29 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
     assert '内訳の金額が数値ではありません' in response.get_data(as_text=True)
 
 
+def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
+    """明細編集で収支を変えられ、kind を送らないフォーム（要確認画面）では収支を変えない
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+    """
+    import_csv(client, fixture_csv_bytes)
+    tx_id = first_tx_id(client, 'SAMPLE')
+    assert 'name="kind"' in client.get(f'/transactions/{tx_id}/edit').get_data(as_text=True)
+    response = client.post(
+        f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'bogus'}, follow_redirects=True
+    )
+    assert '不明な収支です' in response.get_data(as_text=True)
+    response = client.post(
+        f'/transactions/{tx_id}/category', data={'category': 'その他', 'kind': 'income'}, follow_redirects=True
+    )
+    assert '収支を「収入」に変更しました' in response.get_data(as_text=True)
+    response = client.post(f'/transactions/{tx_id}/category', data={'category': '外食'}, follow_redirects=True)
+    assert '収支を' not in response.get_data(as_text=True)
+    assert '+10,000' in client.get('/transactions?kind=income').get_data(as_text=True)
+
+
 def test_clear_allocations_requires_existing_transaction(client: FlaskClient) -> None:
     """存在しない明細 ID の内訳削除は成功表示にせず404にする
 
@@ -343,7 +366,7 @@ def test_category_management_flow(client: FlaskClient) -> None:
     assert '並び順を変更しました' in body
 
     body = client.post(
-        '/categories/move', data={'category': 'その他', 'direction': 'down'}, follow_redirects=True
+        '/categories/move', data={'category': '売電収入', 'direction': 'down'}, follow_redirects=True
     ).get_data(as_text=True)
     assert '既に端にあるため並び順は変わりません' in body
 
@@ -484,8 +507,8 @@ def test_annual_page_summary_and_links(client: FlaskClient, fixture_csv_bytes: b
     assert '2026年の総支出' in html
     assert '45,590' in html  # 8 月の月間総支出（test_web_flow と同じ値）
     assert '16,013' in html and '明細のある 3 か月で割った値' in html
-    food_path = '/transactions?month=2026-07&category=%E9%A3%9F%E8%B2%BB'
-    unclassified_path = '/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E'
+    food_path = '/transactions?month=2026-07&category=%E9%A3%9F%E8%B2%BB&kind=expense'
+    unclassified_path = '/transactions?month=2026-07&category=%E6%9C%AA%E5%88%86%E9%A1%9E&kind=expense'
     assert f'href="{food_path.replace("&", "&amp;")}"' in html
     assert f'href="{unclassified_path.replace("&", "&amp;")}"' in html
     assert 'href="/annual?year=2025"' in html and 'href="/annual?year=2027"' in html
@@ -533,3 +556,77 @@ def test_annual_http_exports_empty_year(client: FlaskClient) -> None:
     xlsx_response = client.get('/annual/export.xlsx?year=2027')
     assert xlsx_response.status_code == 200
     assert xlsx_response.get_data()[:2] == b'PK'
+
+
+def test_bank_csv_import_flow(client: FlaskClient, fixture_bank_csv_bytes: bytes) -> None:
+    """銀行 CSV の取込 → ダッシュボードの収入・収支 → 年間表 → 収支での絞り込み
+
+    Args:
+        client: テストクライアント
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    html = upload(client, fixture_bank_csv_bytes, 'bank.csv')
+    assert '5 件を取り込む' in html
+    assert '<dt>口座</dt><dd>銀行口座</dd>' in html
+    assert '4 件<span class="hint">(住宅ローン・売電収入以外の行)</span>' in html
+    assert '地方税' not in html and '定額自動入金' not in html  # 対象外の行は一覧にも出さない
+
+    body = import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+    assert '5 件を取り込みました' in body
+    assert 'うち 2 件は収入として記録しました' in body
+    assert '要確認 0 件' in body  # 許可リストで確定するので要確認にならない
+
+    # 2026-09: 支出 70,000 x 2 = 140,000 / 収入 7,000 / 収支 -133,000
+    html = client.get('/?month=2026-09').get_data(as_text=True)
+    assert '140,000' in html and '+7,000' in html and '-133,000' in html
+
+    html = client.get('/annual?year=2026').get_data(as_text=True)
+    assert '209,000' in html  # 年間の総支出 69,000 + 140,000
+    assert '+13,500' in html  # 年間の収入 6,500 + 7,000
+    assert '-195,500' in html  # 収支
+    assert 'category=%E5%A3%B2%E9%9B%BB%E5%8F%8E%E5%85%A5&amp;kind=income' in html  # 収入行のリンクは収入だけに絞る
+
+    html = client.get('/transactions?kind=income').get_data(as_text=True)
+    assert '<span class="badge cat">売電収入</span>' in html  # カテゴリ選択の option とは別に明細行に出る
+    assert '<span class="badge cat">住宅ローン</span>' not in html  # 支出は絞り込みで除かれる
+    assert '収入 <strong class="income">+13,500 円</strong>' in html
+
+
+def test_income_is_not_counted_as_spending_across_cards(
+    client: FlaskClient, fixture_csv_bytes: bytes, fixture_bank_csv_bytes: bytes
+) -> None:
+    """カード明細と銀行明細を両方取り込んでも、総支出に収入が混ざらない
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 のカード fixture
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    import_csv(client, fixture_csv_bytes, 'card.csv')
+    import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+
+    # 8月 総支出 = カード 45,590 + 住宅ローン 69,000 = 114,590（売電 6,500 は含めない）
+    html = client.get('/?month=2026-08').get_data(as_text=True)
+    assert '114,590' in html and '+6,500' in html
+    assert '-108,090' in html  # 収支
+
+
+def test_dashboard_category_links_filter_by_kind(client: FlaskClient, fixture_bank_csv_bytes: bytes) -> None:
+    """同じカテゴリが支出と収入の両方にある月も、ダッシュボードのカテゴリのリンク先はそれぞれの明細だけに絞る
+
+    Args:
+        client: テストクライアント
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    import_csv(client, fixture_bank_csv_bytes, 'bank.csv')
+    tx_id = first_tx_id(client, '約定返済&month=2026-09')  # 2026-09 の住宅ローン 70,000 x 2 のうち 1 件を収入にする
+    client.post(f'/transactions/{tx_id}/category', data={'category': '住宅ローン', 'kind': 'income'})
+
+    html = client.get('/?month=2026-09').get_data(as_text=True)
+    loan = '%E4%BD%8F%E5%AE%85%E3%83%AD%E3%83%BC%E3%83%B3'
+    expense_path = f'/transactions?month=2026-09&category={loan}&kind=expense'
+    income_path = f'/transactions?month=2026-09&category={loan}&kind=income'
+    assert f'href="{expense_path.replace("&", "&amp;")}"' in html
+    assert f'href="{income_path.replace("&", "&amp;")}"' in html
+    assert '1 件 / 支出 <strong>70,000 円</strong></p>' in client.get(expense_path).get_data(as_text=True)
+    assert '収入 <strong class="income">+70,000 円</strong>' in client.get(income_path).get_data(as_text=True)

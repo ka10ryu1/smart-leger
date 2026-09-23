@@ -1,7 +1,8 @@
 """分類パイプライン
 
     加盟店名正規化 → merchant_rules 検索 → 一致すれば rule
-                                       → 一致しなければ Jev（交換可能な Classifier）
+                                       → 一致しなければ CSV の許可リストで決まったカテゴリ（あれば rule）
+                                       → それも無ければ Jev（交換可能な Classifier）
                                        → confidence >= 閾値 なら自動採用、未満なら要確認
                                        → Jev エラー時（不明なカテゴリを返した場合を含む）は その他 / source=error / 要確認
 
@@ -135,8 +136,9 @@ class ClassificationPipeline:
         usage_date: date,
         categories: dict[str, str],
         prepared_rules: list[tuple[MerchantRule, str, str]],
+        fixed_category: str = '',
     ) -> ClassificationResult:
-        """ルールを優先して分類し、無ければ fallback に問い合わせる（同一加盟店は請求月が違っても 1 回だけ問い合わせる）
+        """ルール → 許可リストのカテゴリ → fallback の順に分類する（同一加盟店は請求月が違っても 1 回だけ問い合わせる）
 
         キャッシュした結果のカテゴリが categories に無い（確定待ちの間に名称変更・削除された）場合は捨てて再問い合わせする
 
@@ -146,10 +148,15 @@ class ClassificationPipeline:
             usage_date: 利用日
             categories: 選択肢のカテゴリ名 → 説明
             prepared_rules: merchant_rules.prepare_rules() 済みの加盟店ルール（取込 1 回につき 1 度だけ前計算する）
+            fixed_category: CSV の許可リストで既に決まっているカテゴリ（空でなければ分類器に問い合わせない）
         """
         rule = match_prepared(prepared_rules, merchant_normalized)
         if rule is not None:
             return ClassificationResult(category=rule.category, confidence=None, source=SOURCE_RULE)
+
+        # 銀行明細の許可リストは「この内容ならこのカテゴリ」が確定しているので、加盟店ルールと同じ扱いにする
+        if fixed_category:
+            return ClassificationResult(category=fixed_category, confidence=None, source=SOURCE_RULE)
 
         # 「7ガツブン X」と「8ガツブン X」は同じ加盟店として 1 回だけ問い合わせる
         cache_key = merchant_key(merchant_normalized)

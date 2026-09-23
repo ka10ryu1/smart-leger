@@ -37,7 +37,7 @@ def test_add_category_appends_with_next_sort_order(data: LedgerData) -> None:
     """
     added = add_category(data, ' ペット　用品 ', '犬猫のフード・病院')
     assert added.category == 'ペット 用品'
-    assert added.sort_order == 11
+    assert added.sort_order == 13
     assert data.category_names()[-1] == 'ペット 用品'
     assert data.category_criteria()['ペット 用品'] == '犬猫のフード・病院'
     assert data.category_criteria()['食費'].startswith('スーパー')  # 既定説明にフォールバック
@@ -154,9 +154,9 @@ def test_move_category_swaps_neighbors_and_stops_at_edges(data: LedgerData) -> N
         move_category(data, '外食', -1)
 
     with pytest.raises(CategoryError, match='端'):
-        move_category(data, 'その他', 1)
+        move_category(data, '売電収入', 1)  # 初期カテゴリの末尾
 
-    assert [c.sort_order for c in data.sorted_categories()] == list(range(1, 11))
+    assert [c.sort_order for c in data.sorted_categories()] == list(range(1, 13))
 
 
 def test_delete_category_guards(data: LedgerData) -> None:

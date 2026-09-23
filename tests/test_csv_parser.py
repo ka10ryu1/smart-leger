@@ -9,22 +9,17 @@ import pytest
 from smart_ledger.services.csv_parser import (
     CsvParseError,
     decode_bytes,
-    find_header_index,
     parse_amount,
     parse_statement_bytes,
+    select_profile,
 )
 
 
 def test_header_detection_not_fixed_line_count() -> None:
     """ヘッダー行は固定行数ではなく「ご利用年月日」で検出する"""
     lines = [['会員番号', 'x'], ['対象カード', 'y'], [], ['メモ', '追加行'], ['ご利用年月日', 'ご利用箇所', 'ご利用額']]
-    assert find_header_index(lines) == 4
-
-
-def test_header_detection_missing_raises() -> None:
-    """ヘッダー行が無ければ CsvParseError"""
-    with pytest.raises(CsvParseError):
-        find_header_index([['a', 'b'], ['c', 'd']])
+    profile, idx = select_profile(lines)
+    assert (profile.name, idx) == ('card', 4)
 
 
 def test_empty_csv_raises() -> None:
@@ -165,3 +160,86 @@ def test_parse_amount(raw: str, expected: int | None) -> None:
         expected: 期待値（読めない場合は None）
     """
     assert parse_amount(raw) == expected
+
+
+def test_bank_profile_reads_only_allowed_rows(fixture_bank_csv_bytes: bytes) -> None:
+    """銀行口座 CSV は住宅ローンと売電の行だけを取り込み、出金は支出・入金は収入として読む（他は対象外として数える）
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
+    assert (parsed.profile, parsed.card, parsed.header_line) == ('bank', '銀行口座', 1)
+    assert len(parsed.rows) == 5
+    assert parsed.excluded_lines == 4  # 地方税・利息・定額自動入金・個人宛振込
+    assert parsed.skipped_lines == 0 and parsed.warnings == []
+    assert {r.merchant_normalized for r in parsed.rows} == {'約定返済 円 住宅', '振込*トウデンPG コウニユウ'}
+    loans = [r for r in parsed.rows if r.category_hint == '住宅ローン']
+    solar = [r for r in parsed.rows if r.category_hint == '売電収入']
+    assert [r.amount for r in loans] == [69000, 70000, 70000]
+    assert all(r.kind == 'expense' for r in loans)
+    assert [r.amount for r in solar] == [6500, 7000]
+    assert all(r.kind == 'income' for r in solar)  # 入金は負数ではなく kind で表す
+
+
+@pytest.mark.parametrize(
+    ('withdrawal', 'deposit', 'expected'),
+    [
+        ('', '7,000', (7000, 'income')),
+        ('0', '7,000', (7000, 'income')),  # 空欄の代わりに 0 を書く銀行でも入金を落とさない
+        ('7,000', '', (7000, 'expense')),
+        ('7,000', '0', (7000, 'expense')),
+    ],
+)
+def test_bank_zero_in_other_column_is_ignored(withdrawal: str, deposit: str, expected: tuple[int, str]) -> None:
+    """出金・入金の反対側の欄が空でも「0」でも、金額のある側で収支を決める
+
+    Args:
+        withdrawal: 出金金額の欄
+        deposit: 入金金額の欄
+        expected: (金額, kind)
+    """
+    content = f'日付,内容,出金金額(円),入金金額(円)\r\n2026/09/05,振込＊トウデンＰＧ　コウニユウ,"{withdrawal}","{deposit}"\r\n'
+    (row,) = parse_statement_bytes(content.encode()).rows
+    assert (row.amount, row.kind) == expected
+
+
+def test_bank_rows_are_sorted_by_date_and_deduplicated(fixture_bank_csv_bytes: bytes) -> None:
+    """新しい日付が先の CSV でも利用日の昇順に並び、同日同額の 2 行は出現回数で区別される
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture
+    """
+    parsed = parse_statement_bytes(fixture_bank_csv_bytes)
+    assert [r.usage_date for r in parsed.rows] == sorted(r.usage_date for r in parsed.rows)
+    same_day = [r for r in parsed.rows if r.usage_date == date(2026, 9, 28)]
+    assert [r.occurrence for r in same_day] == [0, 1]
+    assert len({r.row_key for r in parsed.rows}) == len(parsed.rows)
+
+
+def test_card_profile_is_preferred_over_bank_profile() -> None:
+    """「日付」列を持つカード明細でも、ヘッダーに「ご利用年月日」があれば card として読む"""
+    content = '日付,メモ\r\nご利用年月日,ご利用箇所,ご利用額\r\n2026/08/01,テスト,100\r\n'.encode()
+    parsed = parse_statement_bytes(content)
+    assert parsed.profile == 'card'
+    assert [r.category_hint for r in parsed.rows] == ['']  # card は許可リストを使わない
+
+
+def test_unknown_header_reports_both_markers() -> None:
+    """どちらのプロファイルのヘッダーも無ければ、両方の目印を挙げて CsvParseError"""
+    with pytest.raises(CsvParseError, match='ご利用年月日.*日付'):
+        parse_statement_bytes('氏名,金額\r\nテスト,100\r\n'.encode())
+
+
+def test_row_keys_do_not_depend_on_file_order(fixture_bank_csv_bytes: bytes) -> None:
+    """同じ明細を新しい日付が先 / 古い日付が先のどちらの並びで出力した CSV でも row_key の集合は一致する
+
+    Args:
+        fixture_bank_csv_bytes: CP932 の銀行 fixture（新しい日付が先）
+    """
+    header, *body = fixture_bank_csv_bytes.decode('cp932').rstrip('\r\n').split('\r\n')
+    reversed_csv = '\r\n'.join([header, *reversed(body)]).encode('cp932')
+    newest_first = parse_statement_bytes(fixture_bank_csv_bytes)
+    oldest_first = parse_statement_bytes(reversed_csv)
+    assert {r.row_key for r in newest_first.rows} == {r.row_key for r in oldest_first.rows}
+    assert [r.usage_date for r in newest_first.rows] == [r.usage_date for r in oldest_first.rows]

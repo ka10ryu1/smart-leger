@@ -12,7 +12,7 @@
     <div class="review-head">
       <span class="tx-date">{{ t.usage_date.strftime('%Y/%m/%d') }}</span>
       <span class="tx-merchant">{{ t.merchant_normalized }}</span>
-      <span class="tx-amount">{{ t.amount|yen }}<small>円</small></span>
+      <span class="tx-amount {{ 'income' if t.is_income }}">{{ '+' if t.is_income }}{{ t.amount|yen }}<small>円</small></span>
     </div>
     <div class="review-meta">
       <span class="badge cat">{{ t.category or '未分類' }}</span>
