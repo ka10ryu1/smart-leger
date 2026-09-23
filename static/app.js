@@ -96,9 +96,20 @@
       setTimeout(function () {
         form.querySelectorAll('button[type="submit"]').forEach(function (btn) {
           btn.disabled = true;
-          if (btn.dataset.busyLabel) btn.textContent = btn.dataset.busyLabel;
+          btn.dataset.submitting = '1';
+          if (btn.dataset.busyLabel) { btn.dataset.idleLabel = btn.textContent; btn.textContent = btn.dataset.busyLabel; }
         });
       }, 0);
+    });
+  });
+
+  // 戻るで bfcache から復元されたページでは、上で無効化したままの送信ボタンを元に戻す(サーバー側の disabled は触らない)
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) return;
+    document.querySelectorAll('button[data-submitting]').forEach(function (btn) {
+      btn.disabled = false;
+      delete btn.dataset.submitting;
+      if (btn.dataset.idleLabel) btn.textContent = btn.dataset.idleLabel;
     });
   });
 })();

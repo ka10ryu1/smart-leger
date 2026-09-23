@@ -55,7 +55,7 @@
 ### 4. 明細の単体削除(規模: 小)
 
 - 編集画面から取込明細を 1 件だけ削除する(内訳も同時に削除)。誤取込や返品の整理用
-- 手動明細の削除(`services/manual_entries.py` の `delete_manual_transaction`)は実装済み。取込明細は現在 2 か所で制限しているので、許可する場合は両方を外す: `delete_manual_transaction` の `not tx.is_manual_entry` チェック(サーバー側)と、`edit.html` の削除欄の表示条件 `{% if tx.is_manual_entry %}`。あわせて `test_imported_transaction_cannot_be_deleted` / `test_delete_manual_transaction_rejects_imported_and_missing` を更新する
+- 手動明細の削除(`services/manual_entries.py` の `delete_manual_transaction`)は実装済み。取込明細は現在 2 か所で制限しているので、許可する場合は両方を外す: `delete_manual_transaction` の `not tx.is_manual_entry` チェック(サーバー側)と、`edit.html` の削除欄の表示条件 `{% if tx.is_manual_entry %}`。あわせて `test_imported_transaction_cannot_be_deleted` / `test_delete_manual_transaction_rejects_imported` を更新する
 - データ構造への影響: なし
 - 注意: 削除した明細の `row_key` が消えるため、同じ CSV を再取込すると再び新規として入る。削除を「除外」として `row_key` だけ残す設計にするなら `transactions` に `excluded` 列が必要(要検討)
 

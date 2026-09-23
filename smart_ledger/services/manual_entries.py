@@ -13,6 +13,7 @@ from datetime import date
 
 from ..constants import KIND_INCOME, KIND_LABELS, MANUAL_IMPORT_ID, SOURCE_MANUAL
 from ..models import LedgerData, Transaction, new_id, now_iso
+from .allocations import replace_allocations
 from .normalize import normalize_merchant
 
 logger = logging.getLogger(__name__)
@@ -102,30 +103,26 @@ def add_manual_transaction(data: LedgerData, entry: ManualEntryInput) -> Transac
     return tx
 
 
-def delete_manual_transaction(data: LedgerData, tx_id: str) -> int:
+def delete_manual_transaction(data: LedgerData, tx: Transaction) -> int:
     """手動明細とその内訳を削除する（保存は呼び出し側が行う）
 
     Args:
         data: 対象の全データ
-        tx_id: 削除する明細 ID
+        tx: 削除する明細（data に含まれるもの）
 
     Returns:
         あわせて削除した内訳の件数
 
     Raises:
-        ManualEntryError: 明細が無い、または CSV から取り込んだ明細
+        ManualEntryError: CSV から取り込んだ明細
     """
-    tx = data.find_transaction(tx_id)
-    if tx is None:
-        raise ManualEntryError(f'明細が見つかりません: {tx_id}')
-
     if not tx.is_manual_entry:
         raise ManualEntryError(
             'CSV から取り込んだ明細は削除できません。取込画面の取込履歴から取込ごと取り消してください。'
         )
 
-    allocations = len(data.allocations_for(tx_id))
-    data.transactions = [t for t in data.transactions if t.id != tx_id]
-    data.allocations = [a for a in data.allocations if a.transaction_id != tx_id]
-    logger.info('manual transaction deleted: id=%s allocations=%d', tx_id, allocations)
+    allocations = len(data.allocations_for(tx.id))
+    data.transactions = [t for t in data.transactions if t.id != tx.id]
+    replace_allocations(data, tx.id, [])
+    logger.info('manual transaction deleted: id=%s allocations=%d', tx.id, allocations)
     return allocations

@@ -117,20 +117,17 @@ def test_delete_manual_transaction_removes_allocations() -> None:
         Allocation(tx.id, '外食', 500),
         Allocation('tx_other', '外食', 300),
     ]
-    assert delete_manual_transaction(data, tx.id) == 2
+    assert delete_manual_transaction(data, tx) == 2
     assert [t.id for t in data.transactions] == ['tx_other']
     assert [a.transaction_id for a in data.allocations] == ['tx_other']
 
 
-def test_delete_manual_transaction_rejects_imported_and_missing() -> None:
-    """CSV から取り込んだ明細と存在しない明細は削除しない"""
+def test_delete_manual_transaction_rejects_imported() -> None:
+    """CSV から取り込んだ明細は削除しない"""
     imported = Transaction('tx_imp', date(2026, 8, 1), 'A', 'A', 100, '食費', import_id='imp_1', row_key='k')
     data = LedgerData(transactions=[imported], allocations=[Allocation('tx_imp', '食費', 100)])
     with pytest.raises(ManualEntryError, match='取込ごと取り消して'):
-        delete_manual_transaction(data, 'tx_imp')
-
-    with pytest.raises(ManualEntryError, match='見つかりません'):
-        delete_manual_transaction(data, 'tx_missing')
+        delete_manual_transaction(data, imported)
 
     assert data.transactions == [imported] and len(data.allocations) == 1
 

@@ -106,26 +106,23 @@ def update_category(tx_id: str) -> WerkzeugResponse:
             data, tx, category, kind=kind, memo=memo, remember=scope == 'always', rule_pattern=rule_pattern
         )
 
-    def message(change: CategoryChange) -> str:
-        if change.rule_pattern:
-            msg = f'カテゴリを「{category}」に変更し、ルール「{change.rule_pattern}」を登録しました。'
-            if change.applied_others:
-                msg += f' 一致する {change.applied_others} 件にも適用しました。'
-        else:
-            msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
-
-        if change.changed_kind:
-            msg += f' 収支を「{KIND_LABELS[change.changed_kind]}」に変更しました。'
-
-        return msg
-
     try:
         change = svc().repo.update(mutate)
     except ValueError as exc:  # 不明なカテゴリなど
         flash(str(exc), 'error')
         return redirect(edit_url(tx_id))
 
-    flash(message(change), 'success')
+    if change.rule_pattern:
+        msg = f'カテゴリを「{category}」に変更し、ルール「{change.rule_pattern}」を登録しました。'
+        if change.applied_others:
+            msg += f' 一致する {change.applied_others} 件にも適用しました。'
+    else:
+        msg = f'カテゴリを「{category}」に変更しました(今回だけ)。'
+
+    if change.changed_kind:
+        msg += f' 収支を「{KIND_LABELS[change.changed_kind]}」に変更しました。'
+
+    flash(msg, 'success')
     if not change.matches_self:
         flash(
             f'ルール「{change.rule_pattern}」はこの明細の加盟店名に一致しません。パターンを確認してください。',

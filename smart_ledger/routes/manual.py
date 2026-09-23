@@ -28,7 +28,7 @@ def delete_transaction(tx_id: str) -> WerkzeugResponse:
         if tx is None:
             abort(404)
 
-        return tx.merchant_normalized, delete_manual_transaction(data, tx_id)
+        return tx.merchant_normalized, delete_manual_transaction(data, tx)
 
     try:
         merchant, allocations = svc().repo.update(mutate)
