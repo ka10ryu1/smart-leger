@@ -330,6 +330,45 @@ def test_clear_allocations_removes_existing_rows(client: FlaskClient) -> None:
     assert repo.load().allocations == []
 
 
+def test_allocation_blank_amount_gets_remainder(client: FlaskClient) -> None:
+    """金額欄が空の 1 行には残額を入れて保存し、文言で知らせる（空の行が 2 行・0 円の残額は保存しない）
+
+    Args:
+        client: テストクライアント
+    """
+    repo = client.application.extensions['smart_ledger'].repo
+    repo.update(lambda data: data.transactions.append(Transaction('tx_k', date(2026, 8, 1), 'K', 'K', 10000, '食費')))
+
+    def post(amounts: list[str]) -> str:
+        """内訳フォームを送信し、リダイレクト先の画面を返す
+
+        Args:
+            amounts: 各行の金額（空文字は空欄）
+        """
+        form = {
+            'alloc_category': ['食費', '外食', '日用品・買い物'][: len(amounts)],
+            'alloc_amount': amounts,
+            'alloc_memo': [''] * len(amounts),
+        }
+        return client.post('/transactions/tx_k/allocations', data=form, follow_redirects=True).get_data(as_text=True)
+
+    assert '金額が空の行が 2 行あります' in post(['6000', '', ''])
+    assert '残額が 0 円' in post(['10000', ''])
+    assert repo.load().allocations_for('tx_k') == []
+
+    body = post(['6000', '1500', ''])
+    assert '内訳を保存しました。残額 2,500 円を「日用品・買い物」に入れました。' in body
+    assert [(a.category, a.amount) for a in repo.load().allocations_for('tx_k')] == [
+        ('食費', 6000),
+        ('外食', 1500),
+        ('日用品・買い物', 2500),
+    ]
+    assert '金額を空欄にしてカテゴリだけ選んだ行を 1 行だけ置くと' in body
+
+    body = post(['6000', '4000'])  # 空の行が無ければ従来どおり残額の文言は出さない
+    assert '内訳を保存しました。' in body and 'に入れました' not in body
+
+
 def test_edit_copies_previous_allocations_without_saving(client: FlaskClient) -> None:
     """編集画面の「前回の内訳を複写」は同じ加盟店キーの前回の内訳でフォームを埋め、差額を最後の行に寄せる（保存はしない）
 

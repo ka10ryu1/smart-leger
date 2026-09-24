@@ -9,21 +9,45 @@
 
     function fmt(n) { return n.toLocaleString('ja-JP'); }
 
-    function recalc() {
-      var sum = 0, filled = 0;
-      rows.querySelectorAll('.alloc-amount').forEach(function (input) {
-        var v = parseInt((input.value || '').replace(/,/g, ''), 10);
-        if (!isNaN(v)) { sum += v; filled += 1; }
+    // 入力中の内訳を集計する。金額欄が空でカテゴリかメモのある行は「空の行」(保存時にサーバーが残額を入れる。2 行以上はエラー)
+    function tally() {
+      var sum = 0, filled = 0, blanks = [];
+      rows.querySelectorAll('.alloc-row').forEach(function (row) {
+        var amount = row.querySelector('.alloc-amount');
+        var category = row.querySelector('select').value;
+        var memo = row.querySelector('input[type=text]');
+        var raw = (amount.value || '').replace(/,/g, '').trim();
+        var v = parseInt(raw, 10);
+        if (!isNaN(v)) { sum += v; filled += 1; } else if (!raw && (category || (memo && memo.value.trim()))) { blanks.push(category); }
       });
-      var diff = total - sum;
-      sumEl.textContent = '合計 ' + fmt(sum) + ' 円 / ' + fmt(total) + ' 円' + (diff !== 0 && filled ? '(差額 ' + fmt(diff) + ' 円)' : '');
-      sumEl.classList.toggle('mismatch', filled > 0 && diff !== 0);
-      sumEl.classList.toggle('match', filled > 0 && diff === 0);
+      return { sum: sum, filled: filled, blanks: blanks };
+    }
+
+    // 残額が 0 円か明細金額と逆の符号になるか(サーバーの allocations.flips_sign と同じ判定。保存時にエラーになる)
+    function flipsSign(amount) { return amount === 0 || (amount < 0) !== (total < 0); }
+
+    function recalc() {
+      var t = tally();
+      var diff = total - t.sum;
+      var text = '合計 ' + fmt(t.sum) + ' 円 / ' + fmt(total) + ' 円';
+      var state = '';  // match / mismatch / ''(未入力)
+      if (t.blanks.length === 1) {
+        var bad = flipsSign(diff);
+        text += '(残り ' + fmt(diff) + ' 円 → ' + (t.blanks[0] || 'カテゴリ未選択') + (bad ? '。0 円や明細金額と逆の符号の残額は入れられません' : '') + ')';
+        state = bad || !t.blanks[0] ? 'mismatch' : 'match';
+      } else if (t.blanks.length > 1) {
+        text += '(金額が空の行が ' + t.blanks.length + ' 行あります。残額を入れられるのは 1 行だけです)';
+        state = 'mismatch';
+      } else if (t.filled > 0) {
+        if (diff !== 0) text += '(差額 ' + fmt(diff) + ' 円)';
+        state = diff === 0 ? 'match' : 'mismatch';
+      }
+      sumEl.textContent = text;
+      sumEl.classList.toggle('mismatch', state === 'mismatch');
+      sumEl.classList.toggle('match', state === 'match');
     }
 
     function bindRow(row) {
-      var amount = row.querySelector('.alloc-amount');
-      if (amount) amount.addEventListener('input', recalc);
       var remove = row.querySelector('.alloc-remove');
       if (remove) remove.addEventListener('click', function () {
         if (rows.children.length > 1) { row.remove(); } else {
@@ -34,6 +58,9 @@
       });
     }
 
+    // 金額・カテゴリ・メモのどれが変わっても表示を更新する(追加した行も対象にするため行の親で受ける)
+    rows.addEventListener('input', recalc);
+    rows.addEventListener('change', recalc);
     rows.querySelectorAll('.alloc-row').forEach(bindRow);
     document.getElementById('alloc-add').addEventListener('click', function () {
       var template = rows.querySelector('.alloc-row');
@@ -45,23 +72,16 @@
       clone.querySelector('select').focus();
     });
 
-    // 差額入力の補助: 空の金額欄をダブルクリックで残額を入れる
-    rows.addEventListener('dblclick', function (e) {
-      if (e.target.classList.contains('alloc-amount') && !e.target.value) {
-        var sum = 0;
-        rows.querySelectorAll('.alloc-amount').forEach(function (i) { var v = parseInt(i.value, 10); if (!isNaN(v)) sum += v; });
-        e.target.value = total - sum;
-        recalc();
-      }
-    });
-
-    // 合計の不一致で送信を止める(後で登録する data-submit-once の共通ハンドラは defaultPrevented を見て何もしない)
+    // 合計の不一致で送信を止める(後で登録する data-submit-once の共通ハンドラは defaultPrevented を見て何もしない)。
+    // 空の行が 1 行なら残額はサーバーが入れるので止めない(0 円・逆符号・カテゴリ未選択はサーバーがエラーにする)
     form.addEventListener('submit', function (e) {
-      var sum = 0, filled = 0;
-      rows.querySelectorAll('.alloc-amount').forEach(function (i) { var v = parseInt(i.value, 10); if (!isNaN(v)) { sum += v; filled += 1; } });
-      if (filled > 0 && sum !== total) {
+      var t = tally();
+      if (t.blanks.length > 1) {
         e.preventDefault();
-        alert('内訳の合計(' + fmt(sum) + ' 円)が明細金額(' + fmt(total) + ' 円)と一致しません。');
+        alert('金額が空の行が ' + t.blanks.length + ' 行あります。残額を入れられるのは 1 行だけです。');
+      } else if (t.blanks.length === 0 && t.filled > 0 && t.sum !== total) {
+        e.preventDefault();
+        alert('内訳の合計(' + fmt(t.sum) + ' 円)が明細金額(' + fmt(total) + ' 円)と一致しません。');
       }
     });
     recalc();
