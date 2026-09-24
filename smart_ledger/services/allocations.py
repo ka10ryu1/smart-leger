@@ -17,8 +17,16 @@ class AllocationInput:
     """フォームから受け取った内訳 1 行"""
 
     category: str
-    amount: int
+    amount: int | None  # None は金額欄が空の行（保存時に残額を入れる）
     memo: str = ''
+
+
+@dataclass
+class ValidatedAllocations:
+    """検証済みの内訳（保存用）"""
+
+    allocations: list[Allocation]
+    remainder: Allocation | None = None  # 金額欄が空の行に残額を入れた場合、その行
 
 
 @dataclass
@@ -31,8 +39,21 @@ class AllocationCopy:
     last_row_flipped: bool  # 寄せた結果、最後の行が 0 円か明細金額と逆の符号になった（画面で見直しを促す）
 
 
-def validate_allocations(tx: Transaction, items: list[AllocationInput], categories: list[str]) -> list[Allocation]:
-    """内訳を検証して Allocation に変換する（合計が明細金額と一致しなければ AllocationError）
+def flips_sign(amount: int, total: int) -> bool:
+    """内訳 1 行の金額が 0 円か、明細金額と逆の符号になっているかを返す
+
+    Args:
+        amount: 内訳 1 行の金額
+        total: 明細金額
+    """
+    return amount == 0 or (amount < 0) != (total < 0)
+
+
+def validate_allocations(tx: Transaction, items: list[AllocationInput], categories: list[str]) -> ValidatedAllocations:
+    """内訳を検証して Allocation に変換する（金額が空の行が無く、合計が明細金額と一致しなければ AllocationError）
+
+    金額が空（None）の行が 1 つだけなら、明細金額 - 他の行の合計（残額）をその行に入れる。
+    空の行が 2 つ以上ある場合や、残額が 0 円か明細金額と逆の符号になる場合は AllocationError
 
     Args:
         tx: 対象の明細
@@ -40,11 +61,11 @@ def validate_allocations(tx: Transaction, items: list[AllocationInput], categori
         categories: 有効なカテゴリ名
 
     Returns:
-        保存用の Allocation リスト（入力がすべて空なら空リスト）
+        保存用の内訳と残額を入れた行（入力がすべて空なら内訳は空リスト）
     """
     cleaned = [i for i in items if i.category or i.amount or i.memo]
     if not cleaned:
-        return []
+        return ValidatedAllocations(allocations=[])
 
     for i in cleaned:
         if not i.category:
@@ -56,13 +77,26 @@ def validate_allocations(tx: Transaction, items: list[AllocationInput], categori
         if i.amount == 0:
             raise AllocationError('内訳の金額が 0 の行があります。')
 
-    total = sum(i.amount for i in cleaned)
-    if total != tx.amount:
+    blanks = sum(1 for i in cleaned if i.amount is None)
+    if blanks > 1:
+        raise AllocationError(f'金額が空の行が {blanks} 行あります。残額を入れられるのは 1 行だけです。')
+
+    total = sum(i.amount for i in cleaned if i.amount is not None)
+    remainder = tx.amount - total
+    if blanks and flips_sign(remainder, tx.amount):
         raise AllocationError(
-            f'内訳の合計 {total:,} 円が明細金額 {tx.amount:,} 円と一致しません(差額 {tx.amount - total:,} 円)。'
+            f'金額が空の行に入る残額が {remainder:,} 円になります(明細金額 {tx.amount:,} 円、他の行の合計 {total:,} 円)。'
+            '0 円や明細金額と逆の符号になる残額は入れられません。'
         )
 
-    return [Allocation(transaction_id=tx.id, category=i.category, amount=i.amount, memo=i.memo) for i in cleaned]
+    if not blanks and total != tx.amount:
+        raise AllocationError(
+            f'内訳の合計 {total:,} 円が明細金額 {tx.amount:,} 円と一致しません(差額 {remainder:,} 円)。'
+        )
+
+    allocations = [Allocation(tx.id, i.category, remainder if i.amount is None else i.amount, i.memo) for i in cleaned]
+    filled = next((a for a, i in zip(allocations, cleaned, strict=True) if i.amount is None), None)
+    return ValidatedAllocations(allocations=allocations, remainder=filled)
 
 
 def replace_allocations(data: LedgerData, tx_id: str, new_items: list[Allocation]) -> None:
@@ -122,12 +156,11 @@ def copy_previous_allocations(data: LedgerData, tx: Transaction) -> AllocationCo
     if source is None:
         return None
 
-    items = [
-        AllocationInput(category=a.category, amount=a.amount, memo=a.memo) for a in data.allocations_for(source.id)
-    ]
+    source_items = data.allocations_for(source.id)
+    items = [AllocationInput(category=a.category, amount=a.amount, memo=a.memo) for a in source_items]
     # 複写元の明細金額ではなく内訳の合計との差を取る（Excel を直接編集して合計がずれていても複写先の金額に揃う）
-    difference = tx.amount - sum(i.amount for i in items)
-    last = items[-1]
-    last.amount += difference
-    flipped = last.amount == 0 or (last.amount < 0) != (tx.amount < 0)
+    difference = tx.amount - sum(a.amount for a in source_items)
+    last_amount = source_items[-1].amount + difference
+    items[-1].amount = last_amount
+    flipped = flips_sign(last_amount, tx.amount)
     return AllocationCopy(source=source, items=items, difference=difference, last_row_flipped=flipped)

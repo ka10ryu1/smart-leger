@@ -9,6 +9,7 @@ from ..constants import KIND_LABELS
 from ..models import LedgerData
 from ..services.allocations import (
     AllocationInput,
+    ValidatedAllocations,
     copy_previous_allocations,
     replace_allocations,
     validate_allocations,
@@ -22,7 +23,7 @@ def parse_allocation_form() -> list[AllocationInput]:
     """内訳フォーム（alloc_category / alloc_amount / alloc_memo の並列リスト）を読む
 
     Returns:
-        空行を除いた内訳入力（金額が数値でなければ ValueError）
+        空行を除いた内訳入力（金額欄が空の行は amount=None。金額が数値でなければ ValueError）
     """
     categories = request.form.getlist('alloc_category')
     amounts = request.form.getlist('alloc_amount')
@@ -36,7 +37,7 @@ def parse_allocation_form() -> list[AllocationInput]:
             continue
 
         try:
-            amt = int(amt_raw) if amt_raw else 0
+            amt = int(amt_raw) if amt_raw else None
         except ValueError as exc:
             raise ValueError(f'内訳の金額が数値ではありません: {amt_raw}') from exc
 
@@ -141,24 +142,33 @@ def update_category(tx_id: str) -> WerkzeugResponse:
 
 @bp.route('/transactions/<tx_id>/allocations', methods=['POST'])
 def update_allocations(tx_id: str) -> WerkzeugResponse:
-    """内訳を保存する（合計が明細金額と一致しなければエラー表示）
+    """内訳を保存する（合計が明細金額と一致しなければエラー表示。金額欄が空の 1 行には残額を入れて文言で知らせる）
 
     Args:
         tx_id: 明細 ID
     """
 
-    def mutate(data: LedgerData) -> bool:
+    def mutate(data: LedgerData) -> ValidatedAllocations:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
 
         items = parse_allocation_form()  # 金額が数値でなければ ValueError（保存前に止まる）
-        replace_allocations(data, tx_id, validate_allocations(tx, items, data.category_names()))
-        return bool(items)
+        validated = validate_allocations(tx, items, data.category_names())
+        replace_allocations(data, tx_id, validated.allocations)
+        return validated
 
-    return save_and_redirect(
-        mutate, lambda saved: '内訳を保存しました。' if saved else '内訳を削除しました。', edit_url(tx_id)
-    )
+    def message(validated: ValidatedAllocations) -> str:
+        if not validated.allocations:
+            return '内訳を削除しました。'
+
+        if validated.remainder is None:
+            return '内訳を保存しました。'
+
+        remainder = validated.remainder
+        return f'内訳を保存しました。残額 {remainder.amount:,} 円を「{remainder.category}」に入れました。'
+
+    return save_and_redirect(mutate, message, edit_url(tx_id))
 
 
 @bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])

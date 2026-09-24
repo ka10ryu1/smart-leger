@@ -134,7 +134,8 @@ def test_validate_allocations_sum_must_match(categories: list[str]) -> None:
     """
     tx = make_tx('k', date(2026, 8, 15), 10000, 'その他')
     ok = validate_allocations(tx, [AllocationInput('食費', 6000), AllocationInput('外食', 4000)], categories)
-    assert len(ok) == 2 and all(a.transaction_id == 'k' for a in ok)
+    assert len(ok.allocations) == 2 and all(a.transaction_id == 'k' for a in ok.allocations)
+    assert ok.remainder is None
     with pytest.raises(AllocationError, match='一致しません'):
         validate_allocations(tx, [AllocationInput('食費', 6000), AllocationInput('外食', 3000)], categories)
 
@@ -152,7 +153,7 @@ def test_validate_allocations_rejects_unknown_category_and_empty(categories: lis
     with pytest.raises(AllocationError):
         validate_allocations(tx, [AllocationInput('', 100)], categories)
 
-    assert validate_allocations(tx, [], categories) == []
+    assert validate_allocations(tx, [], categories).allocations == []
 
 
 def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> None:
@@ -164,6 +165,72 @@ def test_validate_allocations_rejects_zero_amount_row(categories: list[str]) -> 
     tx = make_tx('k', date(2026, 8, 15), 100, 'その他')
     with pytest.raises(AllocationError, match='0'):
         validate_allocations(tx, [AllocationInput('食費', 100), AllocationInput('外食', 0, 'メモ')], categories)
+
+
+def test_validate_allocations_fills_remainder_into_blank_row(categories: list[str]) -> None:
+    """金額が空の行が 1 つなら、明細金額 - 他の行の合計（残額）をその行に入れ、remainder で返す
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    tx = make_tx('k', date(2026, 8, 15), 10000, 'その他')
+    items = [
+        AllocationInput('食費', 6000),
+        AllocationInput('外食', None, '端数'),
+        AllocationInput('日用品・買い物', 1500),
+    ]
+    result = validate_allocations(tx, items, categories)
+    assert [(a.category, a.amount, a.memo) for a in result.allocations] == [
+        ('食費', 6000, ''),
+        ('外食', 2500, '端数'),
+        ('日用品・買い物', 1500, ''),
+    ]
+    assert result.remainder is result.allocations[1]
+
+    only = validate_allocations(tx, [AllocationInput('食費', None)], categories)  # 1 行だけなら明細金額がそのまま入る
+    assert [a.amount for a in only.allocations] == [10000] and only.remainder is only.allocations[0]
+
+
+def test_validate_allocations_fills_remainder_for_refund(categories: list[str]) -> None:
+    """返金（負の金額）の明細でも残額を入れられ、正の残額になる場合はエラーにする
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    tx = make_tx('r', date(2026, 8, 15), -1000, 'その他')
+    result = validate_allocations(tx, [AllocationInput('食費', -600), AllocationInput('外食', None)], categories)
+    assert [a.amount for a in result.allocations] == [-600, -400]
+
+    with pytest.raises(AllocationError, match='逆の符号'):
+        validate_allocations(tx, [AllocationInput('食費', -1200), AllocationInput('外食', None)], categories)
+
+
+@pytest.mark.parametrize('fixed', [10000, 12000], ids=['zero', 'flipped'])
+def test_validate_allocations_rejects_zero_or_flipped_remainder(categories: list[str], fixed: int) -> None:
+    """残額が 0 円か明細金額と逆の符号になる場合は AllocationError（前回の内訳の複写の last_row_flipped と同じ判定）
+
+    Args:
+        categories: 初期カテゴリ
+        fixed: 金額を入れた行の金額
+    """
+    tx = make_tx('k', date(2026, 8, 15), 10000, 'その他')
+    with pytest.raises(AllocationError, match=f'残額が {10000 - fixed:,} 円'):
+        validate_allocations(tx, [AllocationInput('食費', fixed), AllocationInput('外食', None)], categories)
+
+
+def test_validate_allocations_rejects_multiple_blank_rows(categories: list[str]) -> None:
+    """金額が空の行が 2 つ以上なら AllocationError、空の行のカテゴリ未選択も AllocationError
+
+    Args:
+        categories: 初期カテゴリ
+    """
+    tx = make_tx('k', date(2026, 8, 15), 10000, 'その他')
+    items = [AllocationInput('食費', 6000), AllocationInput('外食', None), AllocationInput('日用品・買い物', None)]
+    with pytest.raises(AllocationError, match='金額が空の行が 2 行あります'):
+        validate_allocations(tx, items, categories)
+
+    with pytest.raises(AllocationError, match='カテゴリが未選択'):
+        validate_allocations(tx, [AllocationInput('食費', 6000), AllocationInput('', None, 'メモだけ')], categories)
 
 
 def make_kyash_ledger(categories: list[str]) -> LedgerData:
@@ -242,7 +309,7 @@ def test_copy_previous_allocations_moves_difference_to_last_row(categories: list
 
     assert copied.source.id == 'aug' and copied.difference == 500 and not copied.last_row_flipped
     assert copied.items == [AllocationInput('食費', 6000, 'スーパー'), AllocationInput('外食', 4500, 'ランチ')]
-    assert validate_allocations(sep, copied.items, categories)  # そのまま保存できる
+    assert validate_allocations(sep, copied.items, categories).allocations  # そのまま保存できる
     assert [a.amount for a in data.allocations_for('aug')] == [6000, 4000]
 
     sep.amount = 10000  # 同じ金額なら差額なし
