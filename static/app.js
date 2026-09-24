@@ -18,7 +18,7 @@
         var memo = row.querySelector('input[type=text]');
         var raw = (amount.value || '').replace(/,/g, '').trim();
         var v = parseInt(raw, 10);
-        if (!isNaN(v)) { sum += v; filled += 1; } else if (!raw && (category || (memo && memo.value.trim()))) { blanks.push(category); }
+        if (!isNaN(v)) { sum += v; filled += 1; } else if (!raw && (category || memo.value.trim())) { blanks.push(category); }
       });
       return { sum: sum, filled: filled, blanks: blanks };
     }

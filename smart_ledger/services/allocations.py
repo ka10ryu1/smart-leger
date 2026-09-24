@@ -94,16 +94,9 @@ def validate_allocations(tx: Transaction, items: list[AllocationInput], categori
             f'内訳の合計 {total:,} 円が明細金額 {tx.amount:,} 円と一致しません(差額 {remainder:,} 円)。'
         )
 
-    result = ValidatedAllocations(allocations=[])
-    for i in cleaned:
-        allocation = Allocation(
-            transaction_id=tx.id, category=i.category, amount=remainder if i.amount is None else i.amount, memo=i.memo
-        )
-        result.allocations.append(allocation)
-        if i.amount is None:
-            result.remainder = allocation
-
-    return result
+    allocations = [Allocation(tx.id, i.category, remainder if i.amount is None else i.amount, i.memo) for i in cleaned]
+    filled = next((a for a, i in zip(allocations, cleaned, strict=True) if i.amount is None), None)
+    return ValidatedAllocations(allocations=allocations, remainder=filled)
 
 
 def replace_allocations(data: LedgerData, tx_id: str, new_items: list[Allocation]) -> None:
