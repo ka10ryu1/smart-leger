@@ -45,7 +45,7 @@ class LanAccess:
     ) -> None:
         """
         Args:
-            address: スマホから接続する PC の LAN の IP アドレス（起動時に取得する。取得できなければ None）
+            address: スマホから接続する PC の LAN の IP アドレス（.env の指定か起動時の自動取得の値。どちらも無ければ None）
             pin_digits: PIN の桁数
             max_failures: この回数続けて間違えたら PIN を作り直して入力を一時停止する
             lockout_seconds: 最初の一時停止の秒数（正しい PIN が入力されるまで、作り直すたびに倍にする）
