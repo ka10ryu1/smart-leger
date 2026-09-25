@@ -8,6 +8,7 @@ import secrets
 from flask import Flask
 
 from .config import Config, load_config
+from .constants import LOOPBACK_HOSTS
 from .logging_setup import setup_logging
 
 
@@ -27,7 +28,13 @@ def create_app(config: Config | None = None) -> Flask:
 
     from .routes import bp, build_services
 
-    app.extensions['smart_ledger'] = build_services(config)
+    services = build_services(config)
+    # DNS リバインディングで別サイトのページから届いたリクエストを 400 にする（LAN モードでは起動時の LAN の IP も許可する）
+    app.config['TRUSTED_HOSTS'] = [
+        *LOOPBACK_HOSTS,
+        *([services.lan.address] if services.lan and services.lan.address else []),
+    ]
+    app.extensions['smart_ledger'] = services
     app.register_blueprint(bp)
 
     logging.getLogger(__name__).info(

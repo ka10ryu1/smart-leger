@@ -12,31 +12,22 @@ from urllib.parse import urlsplit
 from flask import abort, redirect, render_template, request, session, url_for
 from werkzeug.wrappers import Response as WerkzeugResponse
 
-from ..services.lan_access import PinResult, lan_ip, qr_svg
+from ..services.lan_access import PinResult, qr_svg
 from .common import bp, safe_back, svc
 
 logger = logging.getLogger(__name__)
 
 
-def is_local_request(
-    loopback_addresses: tuple[str, ...] = ('127.0.0.1', '::1'),
-    loopback_hosts: tuple[str, ...] = ('localhost', '127.0.0.1', '[::1]'),
-) -> bool:
-    """PC 自身からのリクエストか（接続元がループバックで、Host もループバックの名前のとき）
+def is_local_request(loopback_address: str = '127.0.0.1') -> bool:
+    """PC 自身からのリクエストか（接続元がループバックのとき）
 
-    Host も確かめるのは、DNS リバインディングで別サイトのページから localhost に届いたリクエストを PC 自身の操作と
-    みなさないため
+    DNS リバインディングで別サイトのページから届いたリクエストは、Host が TRUSTED_HOSTS に無いため Flask が 400 にする
+    （create_app）。待ち受けは IPv4 だけなので ::1 からは届かない
 
     Args:
-        loopback_addresses: ループバックとみなす接続元アドレス
-        loopback_hosts: ループバックとみなす Host（ポートを除いた部分）
+        loopback_address: ループバックとみなす接続元アドレス
     """
-    host = request.host.lower()
-    name, separator, port = host.rpartition(':')
-    if not separator or not port.isdigit():  # ポートの無い Host（'[::1]' の ':' はポートの区切りではない）
-        name = host
-
-    return request.remote_addr in loopback_addresses and name in loopback_hosts
+    return request.remote_addr == loopback_address
 
 
 @bp.before_app_request
@@ -84,7 +75,7 @@ def lan_page() -> str:
     if lan is None or not is_local_request():
         abort(404)
 
-    address = lan_ip()
+    address = lan.address
     port = request.environ.get('SERVER_PORT', '80')  # Host ではなく待ち受けているポートを使う
     url = f'http://{address}:{port}/' if address else None
     return render_template(
@@ -103,26 +94,27 @@ def lan_login() -> str | WerkzeugResponse | tuple[str, int]:
     if lan is None:
         abort(404)
 
+    back = safe_back()
     if is_local_request():
-        return redirect(safe_back())
+        return redirect(back)
 
     if request.method != 'POST':  # Flask が GET に自動で付ける HEAD は PIN の間違いとして数えない
-        return render_template('lan_login.html', back=safe_back(), error=None)
+        return render_template('lan_login.html', back=back, error=None)
 
     result = lan.verify(request.form.get('pin', ''))
     if result is PinResult.OK:
         session['lan_auth'] = lan.session_token
         session.permanent = True  # スマホのブラウザを閉じてもサーバーを止めるまでは入り直さなくてよい
         logger.info('lan login succeeded: remote=%s', request.remote_addr)
-        return redirect(safe_back())
+        return redirect(back)
 
     if result is PinResult.LOCKED:
         message = f'PIN を続けて間違えたため、一時的に入力を受け付けていません。約 {lan.locked_seconds()} 秒後に、PC の「スマホで開く」画面に表示される新しい PIN を入力してください。'
-        return render_template('lan_login.html', back=safe_back(), error=message), 429
+        return render_template('lan_login.html', back=back, error=message), 429
 
     if result is PinResult.REGENERATED:
         message = 'PIN が違います。間違いが続いたため PIN を作り直しました。PC の「スマホで開く」画面で新しい PIN を確認してください。'
     else:
         message = 'PIN が違います。PC の「スマホで開く」画面に表示されている 4 桁の PIN を入力してください。'
 
-    return render_template('lan_login.html', back=safe_back(), error=message), 401
+    return render_template('lan_login.html', back=back, error=message), 401

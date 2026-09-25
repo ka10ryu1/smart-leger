@@ -12,7 +12,7 @@ from werkzeug.test import TestResponse
 
 from smart_ledger import create_app
 from smart_ledger.config import Config
-from smart_ledger.routes import lan as lan_routes
+from smart_ledger.routes import common as common_routes
 from smart_ledger.services import lan_access
 from smart_ledger.services.lan_access import LanAccess, PinResult, lan_ip, qr_svg
 
@@ -46,7 +46,7 @@ def lan_app(test_config: Config, monkeypatch: pytest.MonkeyPatch) -> Flask:
         test_config: 一時ディレクトリを使う設定
         monkeypatch: LAN の IP の取得を差し替える
     """
-    monkeypatch.setattr(lan_routes, 'lan_ip', lambda: '192.168.1.10')
+    monkeypatch.setattr(common_routes, 'lan_ip', lambda: '192.168.1.10')
     app = create_app(dataclasses.replace(test_config, lan=True))
     app.config['TESTING'] = True
     return app
@@ -112,9 +112,6 @@ def test_invalid_pin_input_is_wrong_without_error(submitted: str) -> None:
         submitted: 入力された PIN
     """
     access = LanAccess()
-    if submitted == access.pin:
-        pytest.skip('偶然 PIN と一致した')
-
     assert access.verify(submitted) is PinResult.WRONG
 
 
@@ -429,17 +426,19 @@ def test_brute_force_regenerates_pin_shown_on_pc(lan_app: Flask) -> None:
     assert '入力を受け付けません' in html
 
 
-def test_dns_rebinding_host_is_not_treated_as_local(lan_app: Flask) -> None:
-    """接続元がループバックでも Host が別の名前なら PC 自身とみなさず PIN を求める
+def test_untrusted_host_is_rejected_in_lan_mode(lan_app: Flask) -> None:
+    """Host が localhost・127.0.0.1・LAN の IP 以外（DNS リバインディング）なら 400、Host を localhost にしたスマホは PIN を求める
 
     Args:
         lan_app: LAN モードのアプリ
     """
-    client = lan_app.test_client()
+    client, phone = lan_app.test_client(), phone_client(lan_app)
     for base_url in ('http://evil.example:5000', 'http://evil@localhost:5000'):
-        assert client.get('/lan', base_url=base_url).status_code == 302
+        assert client.get('/lan', base_url=base_url).status_code == 400
+        assert phone.get('/', base_url=base_url).status_code == 400
 
     assert client.get('/lan', base_url='http://127.0.0.1:5000').status_code == 200
+    assert phone.get('/lan', base_url='http://localhost:5000').status_code == 302
 
 
 def test_other_session_token_is_not_accepted(lan_app: Flask) -> None:
@@ -456,15 +455,15 @@ def test_other_session_token_is_not_accepted(lan_app: Flask) -> None:
 
 
 def test_lan_disabled_keeps_current_behavior(test_config: Config) -> None:
-    """LAN モードでなければ PIN を求めず、「スマホで開く」画面と PIN 入力画面は 404
+    """LAN モードでなければ PIN を求めず、「スマホで開く」画面と PIN 入力画面は 404、Host は localhost・127.0.0.1 だけ
 
     Args:
         test_config: 一時ディレクトリを使う設定（LAN モード無効）
     """
     app = create_app(test_config)
     app.config['TESTING'] = True
-    phone = phone_client(app)
-    assert phone_request(phone, '/').status_code == 200
+    assert app.test_client().get('/', base_url='http://127.0.0.1:5000').status_code == 200
+    assert app.test_client().get('/', base_url='http://192.168.1.10:5000').status_code == 400
     assert app.test_client().get('/lan').status_code == 404
     assert app.test_client().get('/lan/login').status_code == 404
     assert 'スマホで開く</a>' not in app.test_client().get('/').get_data(as_text=True)

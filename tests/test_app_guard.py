@@ -17,6 +17,18 @@ import app as app_module
 from app import main, port_is_free, running_instance
 
 
+class FakeApp:
+    """app.run の呼び出しを記録するテスト用アプリ"""
+
+    def __init__(self) -> None:
+        """記録を空で始める"""
+        self.runs: list[dict[str, object]] = []
+
+    def run(self, **kwargs: object) -> None:
+        """Flask を起動せず引数だけ記録する"""
+        self.runs.append(kwargs)
+
+
 def free_port() -> int:
     """空いている TCP ポート番号を返す"""
     with socket.socket() as sock:
@@ -168,32 +180,24 @@ def test_running_instance_false_when_listener_is_silent() -> None:
 
 
 def test_main_runs_app_when_port_is_free(monkeypatch: pytest.MonkeyPatch) -> None:
-    """空きポートなら起動済み確認を行わず、CLI の host / port で Flask を起動する
+    """空きポートなら起動済み確認を行わず、127.0.0.1 と CLI の port で Flask を起動する
 
     Args:
         monkeypatch: 起動依存をテスト用に差し替える
     """
-    calls: dict[str, object] = {}
-
-    class FakeApp:
-        """app.run の呼び出しを記録するテスト用アプリ"""
-
-        def run(self, **kwargs: object) -> None:
-            """Flask を起動せず引数だけ記録する"""
-            calls['run'] = kwargs
-
+    fake_app = FakeApp()
     config = SimpleNamespace(port=5000, debug=False, lan=False)
     monkeypatch.delenv('WERKZEUG_RUN_MAIN', raising=False)
-    monkeypatch.setattr(sys, 'argv', ['app.py', '--host', 'localhost', '--port', '6123'])
+    monkeypatch.setattr(sys, 'argv', ['app.py', '--port', '6123'])
     monkeypatch.setattr(app_module, 'load_config', lambda: config)
     monkeypatch.setattr(
         app_module, 'port_is_free', lambda host, port: host in ('0.0.0.0', '127.0.0.1') and port == 6123
     )
     monkeypatch.setattr(app_module, 'running_instance', lambda url: pytest.fail(f'不要な接続確認: {url}'))
-    monkeypatch.setattr(app_module, 'create_app', lambda received: FakeApp())
+    monkeypatch.setattr(app_module, 'create_app', lambda received: fake_app)
 
     assert main() == 0
-    assert calls['run'] == {'host': 'localhost', 'port': 6123, 'debug': False, 'use_reloader': False}
+    assert fake_app.runs == [{'host': '127.0.0.1', 'port': 6123, 'debug': False, 'use_reloader': False}]
 
 
 @pytest.mark.parametrize(('lan', 'expected'), [(False, 'http://localhost:6123'), (True, 'http://localhost:6123/lan')])
@@ -245,24 +249,16 @@ def test_main_reloader_child_skips_port_guard(monkeypatch: pytest.MonkeyPatch) -
     Args:
         monkeypatch: 起動依存をテスト用に差し替える
     """
-    calls: list[dict[str, object]] = []
-
-    class FakeApp:
-        """app.run の呼び出しを記録するテスト用アプリ"""
-
-        def run(self, **kwargs: object) -> None:
-            """Flask を起動せず引数だけ記録する"""
-            calls.append(kwargs)
-
+    fake_app = FakeApp()
     config = SimpleNamespace(port=5000, debug=True, lan=False)
     monkeypatch.setenv('WERKZEUG_RUN_MAIN', 'true')
     monkeypatch.setattr(sys, 'argv', ['app.py'])
     monkeypatch.setattr(app_module, 'load_config', lambda: config)
     monkeypatch.setattr(app_module, 'port_is_free', lambda host, port: pytest.fail('ポート確認を行った'))
-    monkeypatch.setattr(app_module, 'create_app', lambda received: FakeApp())
+    monkeypatch.setattr(app_module, 'create_app', lambda received: fake_app)
 
     assert main() == 0
-    assert calls == [{'host': '127.0.0.1', 'port': 5000, 'debug': True, 'use_reloader': True}]
+    assert fake_app.runs == [{'host': '127.0.0.1', 'port': 5000, 'debug': True, 'use_reloader': True}]
 
 
 @pytest.mark.parametrize(('lan', 'free_host'), [(True, '0.0.0.0'), (False, '127.0.0.1')])
@@ -288,21 +284,14 @@ def test_main_detects_instance_on_other_address(lan: bool, free_host: str, monke
 def test_main_lan_mode_binds_all_addresses_and_opens_lan_page(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """LAN モードでは --host に関係なく 0.0.0.0 で待ち受け、LAN の URL を出して「スマホで開く」画面を開く
+    """LAN モードでは 0.0.0.0 で待ち受け、LAN の URL を出して「スマホで開く」画面を開く
 
     Args:
         monkeypatch: 起動依存をテスト用に差し替える
         capsys: コンソール出力を確認する
     """
-    calls: dict[str, object] = {}
+    fake_app = FakeApp()
     opened: list[str] = []
-
-    class FakeApp:
-        """app.run の呼び出しを記録するテスト用アプリ"""
-
-        def run(self, **kwargs: object) -> None:
-            """Flask を起動せず引数だけ記録する"""
-            calls['run'] = kwargs
 
     class ImmediateTimer:
         """threading.Timer の代わりに start で即座に呼び出す"""
@@ -327,10 +316,10 @@ def test_main_lan_mode_binds_all_addresses_and_opens_lan_page(
     monkeypatch.setattr(app_module, 'lan_ip', lambda: '192.168.1.10')
     monkeypatch.setattr(app_module.threading, 'Timer', ImmediateTimer)
     monkeypatch.setattr(app_module.webbrowser, 'open', opened.append)
-    monkeypatch.setattr(app_module, 'create_app', lambda received: FakeApp())
+    monkeypatch.setattr(app_module, 'create_app', lambda received: fake_app)
 
     assert main() == 0
-    assert calls['run'] == {'host': '0.0.0.0', 'port': 6123, 'debug': False, 'use_reloader': False}
+    assert fake_app.runs == [{'host': '0.0.0.0', 'port': 6123, 'debug': False, 'use_reloader': False}]
     assert opened == ['http://localhost:6123/lan']
     assert 'http://192.168.1.10:6123/' in capsys.readouterr().out
 
@@ -344,22 +333,6 @@ def test_main_rejects_lan_mode_with_debug(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.delenv('WERKZEUG_RUN_MAIN', raising=False)
     monkeypatch.setattr(sys, 'argv', ['app.py'])
     monkeypatch.setattr(app_module, 'load_config', lambda: SimpleNamespace(port=5000, debug=True, lan=True))
-    monkeypatch.setattr(app_module, 'create_app', lambda received: pytest.fail('アプリを作成した'))
-
-    assert main() == 1
-
-
-@pytest.mark.parametrize('host', ['0.0.0.0', '192.168.1.10', ''])
-def test_main_rejects_lan_host_without_lan_mode(host: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """LAN モードでないのに --host で PC 自身以外のアドレスを指定したら、PIN なしで公開しないよう起動を拒否する
-
-    Args:
-        host: --host の値
-        monkeypatch: 起動依存をテスト用に差し替える
-    """
-    monkeypatch.delenv('WERKZEUG_RUN_MAIN', raising=False)
-    monkeypatch.setattr(sys, 'argv', ['app.py', '--host', host])
-    monkeypatch.setattr(app_module, 'load_config', lambda: SimpleNamespace(port=5000, debug=False, lan=False))
     monkeypatch.setattr(app_module, 'port_is_free', lambda host, port: pytest.fail('ポート確認を行った'))
     monkeypatch.setattr(app_module, 'create_app', lambda received: pytest.fail('アプリを作成した'))
 

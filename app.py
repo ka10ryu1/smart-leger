@@ -5,7 +5,7 @@ python app.py --open-browser  # 起動後にブラウザを開く（start.cmd �
 
 .env の SMART_LEDGER_LAN=1 のときだけ 0.0.0.0 で待ち受け、自宅 LAN のスマホから PIN を入力して開けるようにする
 （--open-browser では「スマホで開く」画面を開く。FLASK_DEBUG=1 との併用は起動を拒否する）。
-LAN モードでないときの --host は 127.0.0.1 / localhost だけ受け付ける（PIN なしで LAN に公開しないため）。
+LAN モードでないときは 127.0.0.1 だけで待ち受ける。
 
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
 （Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。
@@ -103,24 +103,18 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
     return isinstance(payload, dict) and payload.get('app') == app_id
 
 
-def main(browser_delay_seconds: float = 1.2, loopback_hosts: tuple[str, ...] = ('127.0.0.1', 'localhost')) -> int:
+def main(browser_delay_seconds: float = 1.2) -> int:
     """引数を解釈して Flask を起動する
 
     Args:
         browser_delay_seconds: --open-browser 指定時にブラウザを開くまでの待ち秒数
-        loopback_hosts: LAN モードでなくても --host に指定できるアドレス（PC 自身からしか届かないもの）
 
     Returns:
         終了コード（既に起動済みなら 0、ポートを bind できず Smart Ledger とも確認できない、
-        LAN モードでデバッグが有効、または LAN モードでないのに --host が PC 自身以外なら 1）
+        または LAN モードでデバッグが有効なら 1）
     """
     parser = argparse.ArgumentParser(description='Smart Ledger')
     parser.add_argument('--open-browser', action='store_true', help='起動後にブラウザで開く')
-    parser.add_argument(
-        '--host',
-        default='127.0.0.1',
-        help='待ち受けるアドレス（127.0.0.1 か localhost。LAN モードでは 0.0.0.0 に固定）',
-    )
     parser.add_argument('--port', type=int, default=None)
     args = parser.parse_args()
 
@@ -132,14 +126,7 @@ def main(browser_delay_seconds: float = 1.2, loopback_hosts: tuple[str, ...] = (
         print('SMART_LEDGER_LAN=1 と FLASK_DEBUG=1 は同時に使えません。.env の FLASK_DEBUG を 0 にしてください。')
         return 1
 
-    if not config.lan and args.host not in loopback_hosts:
-        # PIN 認証は LAN モードでしか働かないため、PIN なしで LAN に公開しない
-        print(
-            f'--host {args.host} で LAN に公開するには、.env に SMART_LEDGER_LAN=1 を設定してください(PIN 認証が有効になります)。'
-        )
-        return 1
-
-    host = '0.0.0.0' if config.lan else args.host
+    host = '0.0.0.0' if config.lan else '127.0.0.1'
     open_url = f'{url}/lan' if config.lan else url  # LAN モードでは QR コードと PIN の「スマホで開く」画面を開く
 
     # debug リローダーの子プロセスは親が同じポートを確認済みなので飛ばす。
@@ -162,9 +149,10 @@ def main(browser_delay_seconds: float = 1.2, loopback_hosts: tuple[str, ...] = (
             return 0
 
         if already is None:
-            # bind はできないのに接続は拒否される: OS や他のプログラムがポートを予約している、または権限が無い
+            # bind はできないのに接続は拒否される: OS や他のプログラムがポートを予約している、権限が無い、
+            # または別のプログラムが 127.0.0.1 以外のアドレスでだけ待ち受けている
             print(
-                f'ポート {port} を使用できません(予約済み、または権限がありません)。.env の SMART_LEDGER_PORT を変更してください。'
+                f'ポート {port} を使用できません(予約済み、権限が無い、または別のプログラムが使用中)。.env の SMART_LEDGER_PORT を変更してください。'
             )
             return 1
 

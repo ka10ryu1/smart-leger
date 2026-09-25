@@ -36,20 +36,23 @@ class LanAccess:
 
     def __init__(
         self,
+        address: str | None = None,
         pin_digits: int = 4,
         max_failures: int = 5,
         lockout_seconds: float = 30.0,
-        max_lockout_seconds: float = 3600.0,
+        max_lockout_seconds: float = 7200.0,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         """
         Args:
+            address: スマホから接続する PC の LAN の IP アドレス（起動時に取得する。取得できなければ None）
             pin_digits: PIN の桁数
             max_failures: この回数続けて間違えたら PIN を作り直して入力を一時停止する
             lockout_seconds: 最初の一時停止の秒数（正しい PIN が入力されるまで、作り直すたびに倍にする）
             max_lockout_seconds: 一時停止の上限秒数
             clock: 経過時間の取得関数（テストで差し替える）
         """
+        self.address = address
         self._pin_digits = pin_digits
         self._max_failures = max_failures
         self._lockout_seconds = lockout_seconds
