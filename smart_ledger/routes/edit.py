@@ -69,8 +69,9 @@ def parse_allocation_form(rows: list[AllocationFormRow]) -> list[AllocationInput
     return items
 
 
-def render_edit(tx_id: str, form_rows: list[AllocationFormRow] | None = None) -> str:
-    """明細編集画面を描画する
+@bp.route('/transactions/<tx_id>/edit')
+def edit_transaction(tx_id: str, form_rows: list[AllocationFormRow] | None = None) -> str:
+    """明細編集画面（copy_allocations=1 なら内訳フォームを前回の内訳の複写で埋める。保存はしない）
 
     Args:
         tx_id: 明細 ID
@@ -95,16 +96,6 @@ def render_edit(tx_id: str, form_rows: list[AllocationFormRow] | None = None) ->
         same_merchant_count=len(same_merchant),
         back=safe_back(),
     )
-
-
-@bp.route('/transactions/<tx_id>/edit')
-def edit_transaction(tx_id: str) -> str:
-    """明細編集画面（copy_allocations=1 なら内訳フォームを前回の内訳の複写で埋める。保存はしない）
-
-    Args:
-        tx_id: 明細 ID
-    """
-    return render_edit(tx_id)
 
 
 @bp.route('/transactions/<tx_id>/rule-preview')
@@ -190,28 +181,25 @@ def update_allocations(tx_id: str) -> WerkzeugResponse | tuple[str, int]:
         if tx is None:
             abort(404)
 
-        items = parse_allocation_form(rows)  # 金額が数値でなければ ValueError（保存前に止まる）
         validated = validate_allocations(tx, items, data.category_names())
         replace_allocations(data, tx_id, validated.allocations)
         return validated
 
-    def message(validated: ValidatedAllocations) -> str:
-        if not validated.allocations:
-            return '内訳を削除しました。'
-
-        if validated.remainder is None:
-            return '内訳を保存しました。'
-
-        remainder = validated.remainder
-        return f'内訳を保存しました。残額 {remainder.amount:,} 円を「{remainder.category}」に入れました。'
-
     try:
+        items = parse_allocation_form(rows)  # 金額が数値でなければ ValueError（保存処理に入る前に止まる）
         validated = svc().repo.update(mutate)
     except ValueError as exc:  # AllocationError / 金額が数値でない（打ち直さずに直せるよう入力を残す）
         flash(str(exc), 'error')
-        return render_edit(tx_id, rows), 400
+        return edit_transaction(tx_id, rows), 400
 
-    flash(message(validated), 'success')
+    remainder = validated.remainder
+    if not validated.allocations:
+        flash('内訳を削除しました。', 'success')
+    elif remainder is None:
+        flash('内訳を保存しました。', 'success')
+    else:
+        flash(f'内訳を保存しました。残額 {remainder.amount:,} 円を「{remainder.category}」に入れました。', 'success')
+
     return redirect(edit_url(tx_id))
 
 

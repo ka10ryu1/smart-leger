@@ -342,7 +342,7 @@ def test_allocation_blank_amount_gets_remainder(client: FlaskClient) -> None:
     repo.update(lambda data: data.transactions.append(Transaction('tx_k', date(2026, 8, 1), 'K', 'K', 10000, '食費')))
 
     def post(amounts: list[str]) -> str:
-        """内訳フォームを送信し、リダイレクト先の画面を返す
+        """内訳フォームを送信し、表示された画面を返す（成功時はリダイレクト先、エラー時は HTTP 400 の編集画面）
 
         Args:
             amounts: 各行の金額（空文字は空欄）
