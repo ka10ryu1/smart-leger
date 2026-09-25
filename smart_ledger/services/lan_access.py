@@ -61,7 +61,7 @@ class LanAccess:
         self._lock = threading.Lock()
         self._pin = self._new_pin()
         self._failures = 0
-        self._lockouts = 0
+        self._next_lockout = min(lockout_seconds, max_lockout_seconds)  # 次に作り直すときの一時停止の秒数
         self._locked_until = 0.0
         # セッションに保存する認証済みの印。起動ごとに変わるので、FLASK_SECRET_KEY を固定していても再起動で無効になる
         self.session_token = secrets.token_urlsafe(32)
@@ -100,10 +100,10 @@ class LanAccess:
                 return PinResult.LOCKED
 
             if hmac.compare_digest(submitted.strip().encode('utf-8'), self._pin.encode('ascii')):
-                # 間違いの回数と一時停止の段数は正しい PIN が入るまでの分だけ数える（回数は全端末で共通だが、
+                # 間違いの回数と一時停止の秒数は正しい PIN が入るまでの分だけ積み上げる（回数は全端末で共通だが、
                 # 間に成功を挟んだ散発的な打ち間違いは合算しない）
                 self._failures = 0
-                self._lockouts = 0
+                self._next_lockout = min(self._lockout_seconds, self._max_lockout_seconds)
                 return PinResult.OK
 
             self._failures += 1
@@ -111,8 +111,8 @@ class LanAccess:
             if self._failures >= self._max_failures:
                 self._pin = self._new_pin()
                 self._failures = 0
-                self._lockouts += 1
-                lockout = min(self._lockout_seconds * 2 ** (self._lockouts - 1), self._max_lockout_seconds)
+                lockout = self._next_lockout
+                self._next_lockout = min(lockout * 2, self._max_lockout_seconds)
                 self._locked_until = self._clock() + lockout
                 logger.warning('lan pin regenerated: reason=too many failures lockout=%ds', lockout)
                 return PinResult.REGENERATED

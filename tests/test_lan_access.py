@@ -135,7 +135,7 @@ def test_too_many_failures_regenerate_pin_and_lock() -> None:
 
 
 def test_correct_pin_resets_failures_and_lockout() -> None:
-    """正しい PIN で間違いの回数と一時停止の段数が戻る（散発的な打ち間違いを合算しない）"""
+    """正しい PIN で間違いの回数と一時停止の秒数が戻る（散発的な打ち間違いを合算しない）"""
     clock = FakeClock()
     access = LanAccess(clock=clock)
     for _ in range(4):
@@ -144,18 +144,18 @@ def test_correct_pin_resets_failures_and_lockout() -> None:
     assert access.verify(access.pin) is PinResult.OK
     assert [access.verify(wrong_pin(access)) for _ in range(4)] == [PinResult.WRONG] * 4
 
-    access.verify(wrong_pin(access))  # 5 回目で作り直し（1 段目の 30 秒）
+    access.verify(wrong_pin(access))  # 5 回目で作り直し（最初の 30 秒）
     clock.now += 30
     for _ in range(5):
         access.verify(wrong_pin(access))
 
-    assert access.locked_seconds() == 60  # 続けて間違えたので 2 段目
+    assert access.locked_seconds() == 60  # 続けて間違えたので倍の 60 秒
     clock.now += 60
     assert access.verify(access.pin) is PinResult.OK
     for _ in range(5):
         access.verify(wrong_pin(access))
 
-    assert access.locked_seconds() == 30  # 成功で段数が戻る
+    assert access.locked_seconds() == 30  # 成功で最初の 30 秒に戻る
 
 
 def test_lockout_doubles_up_to_limit() -> None:
@@ -283,8 +283,10 @@ def test_phone_is_redirected_to_pin_login(lan_app: Flask) -> None:
     assert location.path == '/lan/login'
     assert parse_qs(location.query) == {'back': ['/transactions?q=abc']}
 
-    for path in ('/', '/lan', '/health'):
+    for path in ('/', '/lan', '/health', '/no-such-page', '/rules/add'):  # 404 や 405 になるパスも中身を返さない
         assert phone_request(phone, path).status_code == 302
+
+    assert phone.options('/', base_url='http://192.168.1.10:5000').status_code == 302
 
     login = phone_request(phone, '/lan/login')
     html = login.get_data(as_text=True)
@@ -369,6 +371,7 @@ def test_phone_login_with_correct_pin(lan_app: Flask) -> None:
     response = phone_request(phone, '/lan/login', {'pin': lan_state(lan_app).pin, 'back': '/transactions'})
     assert response.status_code == 302
     assert response.headers['Location'] == '/transactions'
+    assert phone_request(phone, '/lan/login?back=/rules').headers['Location'] == '/rules'  # 認証済みなら入力させない
     cookie = response.headers['Set-Cookie']
     assert 'HttpOnly' in cookie and 'SameSite=Lax' in cookie and 'Expires=' in cookie
     assert phone_request(phone, '/').status_code == 200
@@ -435,7 +438,8 @@ def test_untrusted_host_is_rejected_in_lan_mode(lan_app: Flask) -> None:
     client, phone = lan_app.test_client(), phone_client(lan_app)
     for base_url in ('http://evil.example:5000', 'http://evil@localhost:5000'):
         assert client.get('/lan', base_url=base_url).status_code == 400
-        assert phone.get('/', base_url=base_url).status_code == 400
+        for path in ('/', '/static/style.css', '/no-such-page'):
+            assert phone.get(path, base_url=base_url).status_code == 400
 
     assert client.get('/lan', base_url='http://127.0.0.1:5000').status_code == 200
     assert phone.get('/lan', base_url='http://localhost:5000').status_code == 302

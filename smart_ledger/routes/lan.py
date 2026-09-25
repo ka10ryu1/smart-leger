@@ -70,14 +70,13 @@ def inject_lan() -> dict[str, object]:
 
 @bp.route('/lan')
 def lan_page() -> str:
-    """「スマホで開く」画面（QR コード・PIN・注意事項）。LAN モードで PC 自身が開いたとき以外は 404"""
+    """「スマホで開く」画面（QR コード・PIN・注意事項。LAN モードで PC 自身が開いたとき以外は 404）"""
     lan = svc().lan
     if lan is None or not is_local_request():
         abort(404)
 
-    address = lan.address
     port = request.environ.get('SERVER_PORT', '80')  # Host ではなく待ち受けているポートを使う
-    url = f'http://{address}:{port}/' if address else None
+    url = f'http://{lan.address}:{port}/' if lan.address else None
     return render_template(
         'lan.html',
         lan_url=url,
@@ -95,7 +94,7 @@ def lan_login() -> str | WerkzeugResponse | tuple[str, int]:
         abort(404)
 
     back = safe_back()
-    if is_local_request():
+    if is_local_request() or lan.is_authenticated(session.get('lan_auth')):  # 認証済みの端末の打ち間違いを数えない
         return redirect(back)
 
     if request.method != 'POST':  # Flask が GET に自動で付ける HEAD は PIN の間違いとして数えない
