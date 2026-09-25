@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}スマホで開く{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
+{% block content %}
+<h1>スマホで開く</h1>
+<p class="hint">同じ Wi-Fi につないだスマホのカメラで QR コードを読み取り、表示された画面で PIN を入力してください。PIN を 5 回続けて間違えると PIN を作り直します(この画面は 15 秒ごとに更新します)。</p>
+
+<section class="card lan-connect">
+  {% if lan_url %}
+    <div class="lan-qr">{{ qr|safe }}</div>
+    <p class="lan-url"><code>{{ lan_url }}</code></p>
+  {% else %}
+    <p class="error-text">PC の LAN の IP アドレスを取得できませんでした。Wi-Fi に接続しているか確認し、Smart Ledger を再起動してください。</p>
+  {% endif %}
+  <p class="muted">PIN</p>
+  <p class="lan-pin">{{ pin }}</p>
+  {% if locked_seconds %}
+    <p class="error-text">PIN を続けて間違えた端末があったため PIN を作り直しました。あと約 {{ locked_seconds }} 秒は入力を受け付けません。</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>注意事項</h2>
+  <ul>
+    <li>Windows の設定で、自宅 Wi-Fi のネットワーク プロファイルを「プライベート ネットワーク」にしてください。</li>
+    <li>初回起動時に Windows ファイアウォールの許可を求められたら、「プライベート ネットワーク」だけにチェックし、「パブリック ネットワーク」は外してください。</li>
+    <li>同じ Wi-Fi の端末からは PIN 入力画面まで開けます。来客にはゲスト用 SSID を使ってもらってください。</li>
+    <li>通信は暗号化されない HTTP です。WPA2 / WPA3 で保護された自宅 Wi-Fi でだけ使い、使い終わったら Smart Ledger を終了してください(ログイン状態は再起動で消えます)。</li>
+  </ul>
+</section>
+{% endblock %}

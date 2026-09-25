@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Smart Ledger{% endblock %} - Smart Ledger</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+{% block head %}{% endblock %}
 </head>
 <body>
 <header class="topbar">
@@ -17,6 +18,7 @@
     <a href="{{ url_for('ledger.review') }}" class="{{ 'active' if request.endpoint == 'ledger.review' }}">要確認</a>
     <a href="{{ url_for('ledger.rules') }}" class="{{ 'active' if request.endpoint == 'ledger.rules' }}">ルール</a>
     <a href="{{ url_for('ledger.categories_page') }}" class="{{ 'active' if request.endpoint == 'ledger.categories_page' }}">カテゴリ</a>
+    {% if lan_page_available %}<a href="{{ url_for('ledger.lan_page') }}" class="{{ 'active' if request.endpoint == 'ledger.lan_page' }}">スマホで開く</a>{% endif %}
   </nav>
 </header>
 <main class="container">

@@ -8,6 +8,7 @@ from typing import Callable
 from urllib.parse import urlsplit
 
 from flask import Blueprint, abort, current_app, flash, redirect, render_template, request, url_for
+from werkzeug.exceptions import SecurityError
 from werkzeug.wrappers import Response as WerkzeugResponse
 
 from ..config import Config
@@ -19,6 +20,7 @@ from ..services.classifier import ClassificationPipeline, JevClassifier, NullCla
 from ..services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
 from ..services.importer import Importer
 from ..services.jev_client import JevClient
+from ..services.lan_access import LanAccess, lan_ip
 from ..services.normalize import merchant_key
 
 logger = logging.getLogger(__name__)
@@ -36,6 +38,7 @@ class Services:
     config: Config
     repo: ExcelRepository
     importer: Importer
+    lan: LanAccess | None = None  # LAN モード（SMART_LEDGER_LAN=1）のときだけ作る
 
 
 def build_services(config: Config) -> Services:
@@ -59,7 +62,8 @@ def build_services(config: Config) -> Services:
 
     pipeline = ClassificationPipeline(fallback, threshold=config.confidence_threshold)
     importer = Importer(config.staging_dir, pipeline)
-    return Services(config=config, repo=repo, importer=importer)
+    lan = LanAccess(config.lan_address or lan_ip()) if config.lan else None
+    return Services(config=config, repo=repo, importer=importer, lan=lan)
 
 
 def svc() -> Services:
@@ -118,6 +122,15 @@ def source_label(value: str) -> str:
 
 
 # -------------------------------------------------------------------- hooks
+@bp.before_app_request
+def reject_untrusted_host() -> None:
+    """Host が TRUSTED_HOSTS に無いリクエストを 400 にする（Flask は URL の照合まで遅らせ、それまでのフックでは
+    url_for が使えないため、最初のフックで止める）
+    """
+    if isinstance(request.routing_exception, SecurityError):
+        raise request.routing_exception
+
+
 @bp.before_app_request
 def reject_cross_site_post() -> None:
     """Origin / Referer のホストが一致しない POST を 403 にする（別サイトのページからの CSRF 対策）"""
@@ -180,9 +193,13 @@ def needs_review(data: LedgerData) -> list[Transaction]:
 
 
 def safe_back() -> str:
-    """リクエストの back パラメータをサイト内の相対パスに限定して返す（外部 URL や javascript: は明細一覧に置き換える）"""
+    """リクエストの back パラメータをサイト内の相対パスに限定して返す（外部 URL や javascript: は明細一覧に置き換える）
+
+    '//' で始まる値（'///host' など 3 本以上も含む。ブラウザは外部 URL と解釈する）と、バックスラッシュを含む値（ブラウザは / と扱う）、
+    タブ・改行を含む値（ブラウザは取り除くため '/<タブ>/host' が '//host' になる）を弾く
+    """
     value = request.values.get('back')
-    if value and value.startswith('/') and not value.startswith('//') and '\\' not in value:  # ブラウザは \ も / と扱う
+    if value and value.startswith('/') and not value.startswith('//') and not any(c in value for c in '\\\t\r\n'):
         return value
 
     return url_for('ledger.transactions')

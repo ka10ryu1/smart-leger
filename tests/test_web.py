@@ -233,9 +233,19 @@ def test_external_back_is_replaced(client: FlaskClient, fixture_csv_bytes: bytes
     """
     import_csv(client, fixture_csv_bytes)
     tx_id = first_tx_id(client, 'SAMPLE')
-    html = client.get(f'/transactions/{tx_id}/edit?back=https://evil.example').get_data(as_text=True)
-    assert 'evil.example' not in html
-    for back in ('//evil.example', '/\\evil.example/p', 'https://evil.example'):
+    for back in ('https://evil.example', '///evil.example'):  # 「← 戻る」リンクの href にも出さない
+        html = client.get(f'/transactions/{tx_id}/edit', query_string={'back': back}).get_data(as_text=True)
+        assert 'evil.example' not in html
+
+    for back in (
+        '//evil.example',
+        '///evil.example',
+        '////evil.example',
+        '/\t/evil.example',
+        '/\t//evil.example',
+        '/\\evil.example/p',
+        'https://evil.example',
+    ):
         response = client.post(f'/transactions/{tx_id}/category', data={'category': 'その他', 'back': back})
         assert response.headers['Location'] == '/transactions'
 

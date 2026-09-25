@@ -56,7 +56,7 @@ small { font-size: 0.75em; }
 .actions { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: center; margin-top: 0.8rem; }
 .inline { display: inline; }
 
-select, input[type=text], input[type=search], input[type=number], input[type=date], input[type=file] { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-width: 100%; }
+select, input[type=text], input[type=search], input[type=number], input[type=date], input[type=file], input[type=password] { font: inherit; padding: 0.5rem 0.6rem; border: 1px solid var(--line); border-radius: 8px; background: #fff; max-width: 100%; }
 label { font-size: 0.85rem; color: var(--muted); display: flex; flex-direction: column; gap: 0.25rem; }
 label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(--text); font-size: 0.9rem; }
 .radio-group { display: flex; flex-direction: column; gap: 0.4rem; }
@@ -227,3 +227,11 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
   .annual-table { font-size: 0.8rem; }
   .annual-table th, .annual-table td { padding: 0.35rem 0.4rem; }
 }
+
+/* ---- スマホで開く(QR コードと PIN)・PIN 入力 ---- */
+.lan-connect { text-align: center; }
+.lan-qr svg { width: 240px; height: 240px; max-width: 100%; }
+.lan-url { word-break: break-all; }
+.lan-pin { font-size: 2.6rem; font-weight: 700; letter-spacing: 0.4em; margin: 0 0 0.5rem; font-variant-numeric: tabular-nums; }
+.lan-login { max-width: 16rem; margin: 0 auto; }
+.lan-login input[type=password] { font-size: 1.6rem; text-align: center; letter-spacing: 0.4em; }
