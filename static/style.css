@@ -183,7 +183,8 @@ label.radio { flex-direction: row; align-items: center; gap: 0.4rem; color: var(
   .tx-cards { display: block; }
   .tx-detail, .kv { grid-template-columns: 1fr; gap: 0.1rem; }
   .tx-detail dt, .kv dt { margin-top: 0.4rem; }
-  .alloc-row { grid-template-columns: 1fr 1fr; }
+  .alloc-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }  /* 1fr だと select / input の既定幅より狭くならず、画面の右にはみ出す */
+  .alloc-row select, .alloc-row input { min-width: 0; width: 100%; }
   .alloc-row input[type=text] { grid-column: 1 / 2; }
   .filters label { flex: 1 1 45%; }
   .month-nav .btn { padding: 0.45rem 0.6rem; }
