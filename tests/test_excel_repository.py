@@ -216,6 +216,28 @@ def test_verify_failure_keeps_original_and_no_tmp(repo: ExcelRepository, monkeyp
     assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
 
 
+def test_backup_failure_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
+    """世代バックアップを作れないときは正本を保ち、一時ファイルを片付ける
+
+    Args:
+        repo: 一時ディレクトリのリポジトリ
+        monkeypatch: バックアップの作成を失敗させる
+    """
+    data = repo.load()
+    before = repo.excel_path.read_bytes()
+    data.merchant_rules.append(MerchantRule('X', 'その他'))
+    monkeypatch.setattr(
+        'smart_ledger.services.excel_repository.create_generation_backup',
+        lambda *args: (_ for _ in ()).throw(OSError('backup unavailable')),
+    )
+
+    with pytest.raises(ExcelSaveError, match='バックアップ'):
+        repo.save(data)
+
+    assert repo.excel_path.read_bytes() == before
+    assert not list(repo.excel_path.parent.glob('~*.tmp.xlsx'))
+
+
 def test_replace_os_error_keeps_original_and_no_tmp(repo: ExcelRepository, monkeypatch: pytest.MonkeyPatch) -> None:
     """PermissionError 以外の正本置換失敗も ExcelSaveError にし、正本を保全して一時ファイルを片付ける
 

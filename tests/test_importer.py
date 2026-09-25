@@ -11,7 +11,7 @@ import pytest
 from smart_ledger.constants import DEFAULT_CATEGORIES
 from smart_ledger.models import Allocation, ClassificationResult, MerchantRule
 from smart_ledger.services.classifier import ClassificationPipeline, NullClassifier
-from smart_ledger.services.excel_repository import ExcelRepository
+from smart_ledger.services.excel_repository import ExcelRepository, ExcelSaveError
 from smart_ledger.services.importer import Importer, ImportNotFoundError, summarize_import, undo_import
 from smart_ledger.services.manual_entries import ManualEntryInput, add_manual_transaction
 
@@ -140,24 +140,44 @@ def test_same_rows_from_another_card_are_not_duplicates(
 
 
 def test_commit_retry_reuses_classification_cache(
-    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """保存失敗後に同じプレビューを確定し直しても分類器を呼び直さない（キャッシュはプレビュー時にだけクリア）
+    """保存失敗後の再試行では同じプレビューを使い、分類器を呼び直さず 1 回分だけ保存する
 
     Args:
         tmp_path: pytest の一時ディレクトリ
         repo: 一時ディレクトリのリポジトリ
         fixture_csv_bytes: CP932 の fixture
+        monkeypatch: 最初の Excel 検証だけを失敗させる
     """
     stub = StubClassifier({})
     importer = Importer(tmp_path / 'staging', ClassificationPipeline(stub, 0.85))
     preview = importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
-    importer.commit(repo.load(), preview)
+    original_verify = repo.verify
+
+    def fail_once(path: Path) -> None:
+        monkeypatch.setattr(repo, 'verify', original_verify)
+        raise OSError(f'verification failed: {path.name}')
+
+    monkeypatch.setattr(repo, 'verify', fail_once)
+    with pytest.raises(ExcelSaveError, match='一時保存'):
+        repo.update(lambda data: importer.commit(data, preview))
+
     first_calls = len(stub.calls)
-    importer.commit(repo.load(), preview)  # 保存に失敗して再試行した想定
-    assert first_calls > 0 and len(stub.calls) == first_calls
-    importer.preview(repo.load(), 'a.csv', fixture_csv_bytes)
-    importer.commit(repo.load(), preview)
+    assert first_calls > 0
+    assert repo.load().transactions == []
+    assert importer.load_preview(preview.token) is not None
+
+    result = repo.update(lambda data: importer.commit(data, preview))
+    assert result.imported == 10
+    assert len(repo.load().transactions) == 10
+    assert len(stub.calls) == first_calls
+
+    # 新たなプレビューでは前回の分類結果を再利用しない
+    fresh_data = repo.load()
+    undo_import(fresh_data, result.import_id)
+    fresh_preview = importer.preview(fresh_data, 'a.csv', fixture_csv_bytes)
+    importer.commit(fresh_data, fresh_preview)
     assert len(stub.calls) == first_calls * 2
 
 
@@ -230,6 +250,32 @@ def test_commit_keeps_rows_previewed_as_duplicate_skipped(
     assert (result.imported, result.skipped_duplicates) == (1, 10)
     with pytest.raises(ValueError, match='新規の明細がありません'):
         importer.commit(data, stale)
+
+
+def test_commit_skips_rows_imported_after_preview(
+    tmp_path: Path, repo: ExcelRepository, fixture_csv_bytes: bytes
+) -> None:
+    """プレビュー後に別の取込が確定した行は、古いプレビューから二重登録しない
+
+    Args:
+        tmp_path: pytest の一時ディレクトリ
+        repo: 一時ディレクトリのリポジトリ
+        fixture_csv_bytes: CP932 の fixture
+    """
+    importer = Importer(tmp_path / 'staging', ClassificationPipeline(NullClassifier(), 0.85))
+    data = repo.load()
+    extra_line = '2026/09/10,アタラシイミセ,"2,000",,"2,000",１回払,,"2,000",,   ,\r\n'.encode('cp932')
+    first = importer.preview(data, 'a.csv', fixture_csv_bytes)
+    stale = importer.preview(data, 'b.csv', fixture_csv_bytes + extra_line)
+    assert (first.new_count, stale.new_count) == (10, 11)
+
+    repo.update(lambda current: importer.commit(current, first))
+    result = repo.update(lambda current: importer.commit(current, stale))
+    saved = repo.load()
+
+    assert (result.imported, result.skipped_duplicates) == (1, 10)
+    assert len(saved.transactions) == 11
+    assert len({(t.row_key, t.card) for t in saved.transactions}) == 11
 
 
 def test_undo_import_unknown_id_raises(repo: ExcelRepository) -> None:
