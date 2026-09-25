@@ -23,6 +23,7 @@ def create_app(config: Config | None = None) -> Flask:
     app = Flask(__name__, static_folder=str(config.static_dir))
     app.config['SECRET_KEY'] = config.secret_key or secrets.token_hex(32)
     app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # 別サイトからの POST に LAN モードの認証済みセッションを載せない
 
     from .routes import bp, build_services
 
@@ -30,9 +31,10 @@ def create_app(config: Config | None = None) -> Flask:
     app.register_blueprint(bp)
 
     logging.getLogger(__name__).info(
-        'app started: excel=%s dropbox=%s jev=%s',
+        'app started: excel=%s dropbox=%s jev=%s lan=%s',
         config.excel_path,
         'enabled' if config.dropbox_path else 'disabled',
         'enabled' if config.typesafe_api_key else 'no api key',
+        'enabled' if config.lan else 'disabled',
     )
     return app

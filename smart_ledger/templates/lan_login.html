@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PIN の入力 - Smart Ledger</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{# 認証前の端末にも見える画面なので、base.html のナビゲーションや正本のパスは出さない #}
+<header class="topbar">
+  <span class="brand">Smart Ledger</span>
+</header>
+<main class="container">
+  <section class="card center">
+    <h1>PIN の入力</h1>
+    <p>PC の Smart Ledger の「スマホで開く」画面に表示されている 4 桁の PIN を入力してください。</p>
+    {% if error %}<p class="error-text">{{ error }}</p>{% endif %}
+    <form method="post" action="{{ url_for('ledger.lan_login') }}" class="stack lan-login" data-submit-once>
+      <input type="hidden" name="back" value="{{ back }}">
+      <input type="password" name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" required autofocus aria-label="PIN">
+      <button class="btn btn-primary" type="submit">開く</button>
+    </form>
+  </section>
+</main>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

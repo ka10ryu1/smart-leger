@@ -19,6 +19,7 @@ from ..services.classifier import ClassificationPipeline, JevClassifier, NullCla
 from ..services.excel_repository import ExcelLockedError, ExcelRepository, ExcelSaveError
 from ..services.importer import Importer
 from ..services.jev_client import JevClient
+from ..services.lan_access import LanAccess
 from ..services.normalize import merchant_key
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class Services:
     config: Config
     repo: ExcelRepository
     importer: Importer
+    lan: LanAccess | None = None  # LAN モード（SMART_LEDGER_LAN=1）のときだけ作る
 
 
 def build_services(config: Config) -> Services:
@@ -59,7 +61,8 @@ def build_services(config: Config) -> Services:
 
     pipeline = ClassificationPipeline(fallback, threshold=config.confidence_threshold)
     importer = Importer(config.staging_dir, pipeline)
-    return Services(config=config, repo=repo, importer=importer)
+    lan = LanAccess() if config.lan else None
+    return Services(config=config, repo=repo, importer=importer, lan=lan)
 
 
 def svc() -> Services:

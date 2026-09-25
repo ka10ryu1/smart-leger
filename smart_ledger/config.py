@@ -34,6 +34,7 @@ class Config:
     secret_key: str | None = None
     port: int = 5000
     debug: bool = False
+    lan: bool = False  # True なら 0.0.0.0 で待ち受け、localhost 以外からの接続に PIN を求める
 
     def ensure_dirs(self) -> None:
         """data / backup / staging / logs ディレクトリを作成する"""
@@ -102,4 +103,5 @@ def load_config(env_file: Path | None = None) -> Config:
         secret_key=os.environ.get('FLASK_SECRET_KEY') or None,
         port=int(env_number('SMART_LEDGER_PORT', Config.port, int)),
         debug=os.environ.get('FLASK_DEBUG', '0').strip() in ('1', 'true', 'True'),
+        lan=os.environ.get('SMART_LEDGER_LAN', '0').strip() in ('1', 'true', 'True'),
     )

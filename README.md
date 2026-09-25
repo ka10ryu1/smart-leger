@@ -26,6 +26,7 @@
 | 明細編集 | カテゴリ変更(今回だけ / 今後この加盟店も)、収支(支出 / 収入)の変更、メモ、**内訳分割(allocations)**(「前回の内訳を複写」で同じ加盟店の前回の内訳を入力できる。金額欄を空にした 1 行には残額が入る)。手動で追加した明細は「この明細を削除」で内訳ごと削除できる |
 | ルール | 加盟店ルール(merchant_rules)の一覧・追加・削除 |
 | カテゴリ | カテゴリの追加・名称変更・並び替え・削除。名称変更は明細・ルール・内訳に伝播。Jev 向けの説明文も編集できる |
+| スマホで開く | LAN モード(`SMART_LEDGER_LAN=1`)のときだけ、PC のブラウザに自宅 Wi-Fi のスマホから開くための QR コードと PIN を表示する([スマホから開く(自宅 LAN)](#5-スマホから開く自宅-lan任意)) |
 
 ### 分類の流れ
 
@@ -136,6 +137,23 @@ Jev に送信するのは **加盟店名(正規化後)・金額・利用日の�
 ```powershell
 .\.venv\Scripts\python.exe app.py --open-browser
 ```
+
+### 5. スマホから開く(自宅 LAN、任意)
+
+自宅 Wi-Fi につないだスマホのブラウザから Smart Ledger を開けます(家族が明細を確認・編集する想定)。Windows で直接起動したときだけ使えます(WSL 内で起動するとスマホから届きません)。
+
+1. Windows の「設定」→「ネットワークとインターネット」→「Wi-Fi」→ 自宅の Wi-Fi のプロパティで、ネットワーク プロファイルを **プライベート ネットワーク** にする
+2. `.env` に `SMART_LEDGER_LAN=1` を設定する(`FLASK_DEBUG=1` と同時には使えず、起動を拒否します)
+3. `start.cmd` で起動する。初回は Windows ファイアウォールの許可を求められるので、**「プライベート ネットワーク」だけにチェックし、「パブリック ネットワーク」は外して** 許可する
+4. PC のブラウザに「スマホで開く」画面(QR コードと 4 桁の PIN)が開くので、スマホのカメラで QR コードを読み取り、PIN を入力する
+
+- 既定(`SMART_LEDGER_LAN` 未設定・`0`)は今までどおり `127.0.0.1` だけで待ち受け、PC 自身からしか開けません。`1` のときだけ `0.0.0.0` で待ち受けます(`--host` の指定より優先)。LAN モードでないのに `--host` で `127.0.0.1` / `localhost` 以外を指定すると、PIN なしで LAN に公開しないよう起動を拒否します。コンソールにはスマホ用の URL(`http://192.168.x.x:5000/` など)を 1 行表示します
+- PIN は起動ごとにランダムに作り直します。PC 自身(localhost)からのアクセスは PIN 不要で、「スマホで開く」画面は PC 自身からしか開けません(ナビゲーションの「スマホで開く」からいつでも表示できます)
+- 正しい PIN を入力した端末は、Smart Ledger を止めるまで PIN なしで開けます(再起動するとログイン状態は消えます)
+- PIN を 5 回続けて間違えると PIN を作り直し、しばらく(30 秒。正しい PIN が入力されるまでは作り直すたびに倍、最長 1 時間)入力を受け付けません。正しい PIN が入力されると間違いの回数と一時停止の秒数は元に戻ります。「スマホで開く」画面は 15 秒ごとに更新され、新しい PIN を表示します
+- 同じ Wi-Fi の端末からは PIN 入力画面まで開けます。来客にはゲスト用 SSID を使ってもらってください
+- 通信は HTTP のままです(暗号化は WPA2 / WPA3 の自宅 Wi-Fi に任せます)。ルーターのポート転送などでインターネット側に公開しないでください
+- スマホから開けないときは、PC とスマホが同じ Wi-Fi(ゲスト用 SSID ではない)につながっているか、Windows ファイアウォールの「許可されたアプリ」で Python の「プライベート」にチェックがあるかを確認してください
 
 ## CSV 取込方法
 
@@ -328,7 +346,8 @@ smart-ledger/
 │  │  ├─ manual.py            # 手動明細の追加・削除
 │  │  ├─ imports.py           # CSV 取込
 │  │  ├─ rules.py             # 加盟店ルール
-│  │  └─ categories.py        # カテゴリ管理
+│  │  ├─ categories.py        # カテゴリ管理
+│  │  └─ lan.py               # スマホで開く(QR コード・PIN)と LAN からのリクエストの PIN 認証
 │  ├─ logging_setup.py        # ログ設定(カード番号・APIキーのマスク)
 │  ├─ services/
 │  │  ├─ csv_parser.py        # ヘッダー検出・文字コード判定・row_key
@@ -342,7 +361,8 @@ smart-ledger/
 │  │  ├─ export.py            # 年間表の CSV / Excel エクスポート
 │  │  ├─ allocations.py       # 内訳の検証と前回の内訳の複写
 │  │  ├─ excel_repository.py  # household.xlsx の読み書き(atomic 保存)
-│  │  └─ backup.py            # 世代バックアップ・Dropbox コピー
+│  │  ├─ backup.py            # 世代バックアップ・Dropbox コピー
+│  │  └─ lan_access.py        # LAN 接続の PIN(照合・総当たり対策)・LAN の IP・QR コード
 │  └─ templates/              # Jinja2 テンプレート
 ├─ static/                    # CSS / JS
 ├─ docs/                      # SCREENSHOTS.md, ROADMAP.md, images/
@@ -376,6 +396,7 @@ uv run --locked pytest -q
 - 別カードの同一明細を重複扱いしないこと、外部 URL への戻り先と別サイトからの POST の拒否
 - カテゴリ管理(追加・名称変更の明細 / ルール / 内訳への伝播・並び替え・使用中と「その他」の削除ガード)
 - ログのカード番号 / Bearer マスク、Excel セルの日付表現(`2026/8/1` 等)、空行挿入ツール
+- スマホからの LAN 接続(localhost は PIN 不要、それ以外は PIN 入力画面へ、5 回続けての間違いで PIN の作り直しと一時停止、「スマホで開く」画面は localhost だけ、LAN モードと FLASK_DEBUG の併用拒否、LAN モードでない PC 自身以外の `--host` の拒否)
 
 ### 実 API を使うライブテスト
 
@@ -428,13 +449,16 @@ uv run --locked python tools\insert_block_blank_lines.py smart_ledger tests tool
 
 別サイトのページからの POST(CSRF)は、`Origin` / `Referer` のホストがアプリ自身と一致しない場合に 403 で拒否します。
 
+LAN モード(`SMART_LEDGER_LAN=1`)では、localhost 以外からのリクエストに起動ごとの PIN を求めます。PIN は定数時間で照合し、ログや画面(PC 自身の「スマホで開く」画面を除く)には出しません。
+PIN 入力前の画面にはナビゲーションや正本のパスを表示しません。
+
 ## 今後の予定
 
 次に実装する機能の候補と優先度は [docs/ROADMAP.md](docs/ROADMAP.md) にまとめています。
 
 ## MVP でやらないこと
 
-SQL / SQLite、Docker、WSL 前提、n8n、ユーザー認証、外部公開、Dropbox API、Dropbox → Smart Ledger の逆同期、
+SQL / SQLite、Docker、WSL 前提、n8n、ユーザー認証(自宅 LAN 向けの起動ごとの PIN は除く)、外部公開(自宅 LAN 内は除く)、Dropbox API、Dropbox → Smart Ledger の逆同期、
 iOS ネイティブアプリ、銀行・カード API 連携、スクレイピング、複雑な予算管理、機械学習モデルの自前学習。
 
 ## ライセンス

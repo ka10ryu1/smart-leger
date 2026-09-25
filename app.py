@@ -3,6 +3,10 @@
 python app.py                 # http://localhost:5000
 python app.py --open-browser  # 起動後にブラウザを開く（start.cmd が使用）
 
+.env の SMART_LEDGER_LAN=1 のときだけ 0.0.0.0 で待ち受け、自宅 LAN のスマホから PIN を入力して開けるようにする
+（--open-browser では「スマホで開く」画面を開く。FLASK_DEBUG=1 との併用は起動を拒否する）。
+LAN モードでないときの --host は 127.0.0.1 / localhost だけ受け付ける（PIN なしで LAN に公開しないため）。
+
 同じポートで既に Smart Ledger が動いている場合は 2 つ目を起動せず、既存のものをブラウザで開いて終了する
 （Windows では同じポートに 2 つのサーバーが同居でき、古い方が応答し続ける事故が起きるため）。
 判定は 2 段階で行う。まずソケットの bind でポートが空いているかを確かめ（空いていればそのまま起動）、
@@ -27,6 +31,7 @@ import webbrowser
 
 from smart_ledger import create_app
 from smart_ledger.config import load_config
+from smart_ledger.services.lan_access import lan_ip
 
 
 def port_is_free(host: str, port: int) -> bool:
@@ -40,8 +45,8 @@ def port_is_free(host: str, port: int) -> bool:
     二重起動を検出できない。Windows は TIME_WAIT だけなら素の bind が成功するので付けなくても再起動できる）
 
     Args:
-        host: bind するアドレス（app.run に渡すものと同じにする。Windows では 127.0.0.1 と 0.0.0.0 が
-            別アドレス扱いで互いに衝突しないため、ホストが違うと待ち受け中でも空きと判定される）
+        host: bind するアドレス（Windows では 127.0.0.1 と 0.0.0.0 が別アドレス扱いで互いに衝突せず、
+            ホストが違うと待ち受け中でも空きと判定されるため、main は両方を確かめる）
         port: ポート番号
 
     Returns:
@@ -98,34 +103,61 @@ def running_instance(url: str, timeout: float = 2.0, app_id: str = 'smart-ledger
     return isinstance(payload, dict) and payload.get('app') == app_id
 
 
-def main(browser_delay_seconds: float = 1.2) -> int:
+def main(browser_delay_seconds: float = 1.2, loopback_hosts: tuple[str, ...] = ('127.0.0.1', 'localhost')) -> int:
     """引数を解釈して Flask を起動する
 
     Args:
         browser_delay_seconds: --open-browser 指定時にブラウザを開くまでの待ち秒数
+        loopback_hosts: LAN モードでなくても --host に指定できるアドレス（PC 自身からしか届かないもの）
 
     Returns:
-        終了コード（既に起動済みなら 0、ポートを bind できず Smart Ledger とも確認できなければ 1）
+        終了コード（既に起動済みなら 0、ポートを bind できず Smart Ledger とも確認できない、
+        LAN モードでデバッグが有効、または LAN モードでないのに --host が PC 自身以外なら 1）
     """
     parser = argparse.ArgumentParser(description='Smart Ledger')
     parser.add_argument('--open-browser', action='store_true', help='起動後にブラウザで開く')
-    parser.add_argument('--host', default='127.0.0.1')
+    parser.add_argument(
+        '--host',
+        default='127.0.0.1',
+        help='待ち受けるアドレス（127.0.0.1 か localhost。LAN モードでは 0.0.0.0 に固定）',
+    )
     parser.add_argument('--port', type=int, default=None)
     args = parser.parse_args()
 
     config = load_config()
     port = args.port or config.port
     url = f'http://localhost:{port}'
+    if config.lan and config.debug:
+        # Werkzeug のデバッガーはブラウザからコードを実行できるため、LAN に公開しない
+        print('SMART_LEDGER_LAN=1 と FLASK_DEBUG=1 は同時に使えません。.env の FLASK_DEBUG を 0 にしてください。')
+        return 1
+
+    if not config.lan and args.host not in loopback_hosts:
+        # PIN 認証は LAN モードでしか働かないため、PIN なしで LAN に公開しない
+        print(
+            f'--host {args.host} で LAN に公開するには、.env に SMART_LEDGER_LAN=1 を設定してください(PIN 認証が有効になります)。'
+        )
+        return 1
+
+    host = '0.0.0.0' if config.lan else args.host
+    open_url = f'{url}/lan' if config.lan else url  # LAN モードでは QR コードと PIN の「スマホで開く」画面を開く
 
     # debug リローダーの子プロセスは親が同じポートを確認済みなので飛ばす。
-    # bind できれば空きポートなので接続確認はせず起動する（接続確認は環境によりタイムアウトで空きを使用中と誤判定するため）
-    if os.environ.get('WERKZEUG_RUN_MAIN') != 'true' and not port_is_free(args.host, port):
-        probe_host = '127.0.0.1' if args.host in ('', '0.0.0.0') else args.host  # 0.0.0.0 には接続できない
-        already = running_instance(f'http://{probe_host}:{port}')
+    # bind できれば空きポートなので接続確認はせず起動する（接続確認は環境によりタイムアウトで空きを使用中と誤判定するため）。
+    # Windows では 0.0.0.0 と 127.0.0.1 が別アドレス扱いで互いに衝突しないため、LAN モードかどうかに関係なく両方確かめる
+    # （LAN モードと通常の起動が同じ Excel を別々に保存しないようにする）
+    reloader_child = os.environ.get('WERKZEUG_RUN_MAIN') == 'true'
+    if not reloader_child and not all(port_is_free(bind_host, port) for bind_host in ('0.0.0.0', '127.0.0.1')):
+        already = running_instance(f'http://127.0.0.1:{port}')  # 0.0.0.0 には接続できない
         if already is True:
             print(f'Smart Ledger は既に起動しています: {url}  (このウィンドウは閉じて構いません)')
+            if config.lan:
+                print(
+                    '起動中の Smart Ledger が LAN モードでない場合は、そのウィンドウを閉じてから起動し直してください。'
+                )
+
             if args.open_browser:
-                webbrowser.open(url)
+                webbrowser.open(open_url)
 
             return 0
 
@@ -144,11 +176,18 @@ def main(browser_delay_seconds: float = 1.2) -> int:
         return 1
 
     app = create_app(config)
-    if args.open_browser and (not config.debug or os.environ.get('WERKZEUG_RUN_MAIN') == 'true'):
-        threading.Timer(browser_delay_seconds, lambda: webbrowser.open(url)).start()
+    if args.open_browser and (not config.debug or reloader_child):
+        threading.Timer(browser_delay_seconds, lambda: webbrowser.open(open_url)).start()
 
     print(f'Smart Ledger: {url}  (終了は Ctrl+C)')
-    app.run(host=args.host, port=port, debug=config.debug, use_reloader=config.debug)
+    if config.lan:
+        address = lan_ip()
+        if address:
+            print(f'スマホから: http://{address}:{port}/  (PIN は PC の「スマホで開く」画面 {url}/lan に表示)')
+        else:
+            print('LAN の IP アドレスを取得できませんでした。Wi-Fi への接続を確認してください。')
+
+    app.run(host=host, port=port, debug=config.debug, use_reloader=config.debug)
     return 0
 
 
