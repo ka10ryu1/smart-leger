@@ -62,7 +62,7 @@ def build_services(config: Config) -> Services:
 
     pipeline = ClassificationPipeline(fallback, threshold=config.confidence_threshold)
     importer = Importer(config.staging_dir, pipeline)
-    lan = LanAccess(lan_ip()) if config.lan else None
+    lan = LanAccess(config.lan_address or lan_ip()) if config.lan else None
     return Services(config=config, repo=repo, importer=importer, lan=lan)
 
 
@@ -195,10 +195,11 @@ def needs_review(data: LedgerData) -> list[Transaction]:
 def safe_back() -> str:
     """リクエストの back パラメータをサイト内の相対パスに限定して返す（外部 URL や javascript: は明細一覧に置き換える）
 
-    '//' で始まる値に加え、タブを挟んだ '/<タブ>/host' も弾く（urlsplit とブラウザはタブを除いて '//host' と解釈する）
+    '//' で始まる値（'///host' など 3 本以上も含む。ブラウザは外部 URL と解釈する）と、バックスラッシュを含む値（ブラウザは / と扱う）、
+    タブ・改行を含む値（ブラウザは取り除くため '/<タブ>/host' が '//host' になる）を弾く
     """
     value = request.values.get('back')
-    if value and value.startswith('/') and not urlsplit(value).netloc and '\\' not in value:  # ブラウザは \ も / と扱う
+    if value and value.startswith('/') and not value.startswith('//') and not any(c in value for c in '\\\t\r\n'):
         return value
 
     return url_for('ledger.transactions')

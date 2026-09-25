@@ -270,6 +270,21 @@ def test_lan_page_uses_request_port(lan_app: Flask) -> None:
     assert 'http://192.168.1.10:6123/' in html
 
 
+def test_lan_address_setting_overrides_detected_ip(test_config: Config, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SMART_LEDGER_LAN_ADDRESS を指定すると自動取得の IP（VPN 側など）ではなくその IP を QR コードと Host の許可に使う
+
+    Args:
+        test_config: 一時ディレクトリを使う設定
+        monkeypatch: 自動取得の IP を VPN 側のアドレスに差し替える
+    """
+    monkeypatch.setattr(common_routes, 'lan_ip', lambda: '10.8.0.2')
+    app = create_app(dataclasses.replace(test_config, lan=True, lan_address='192.168.1.50'))
+    app.config['TESTING'] = True
+    assert 'http://192.168.1.50:80/' in app.test_client().get('/lan').get_data(as_text=True)
+    assert phone_request(phone_client(app), '/', base_url='http://192.168.1.50:5000').status_code == 302
+    assert phone_request(phone_client(app), '/', base_url='http://10.8.0.2:5000').status_code == 400
+
+
 def test_phone_is_redirected_to_pin_login(lan_app: Flask) -> None:
     """localhost 以外からの未認証のリクエストは元のパスを添えて PIN 入力画面へ回す
 

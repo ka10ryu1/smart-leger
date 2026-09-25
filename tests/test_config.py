@@ -23,6 +23,7 @@ def clear_config_env(
         'SMART_LEDGER_PORT',
         'FLASK_DEBUG',
         'SMART_LEDGER_LAN',
+        'SMART_LEDGER_LAN_ADDRESS',
     ),
 ) -> None:
     """設定に使う環境変数をすべて削除する
@@ -50,6 +51,7 @@ def test_load_config_uses_defaults_without_environment(tmp_path: Path, monkeypat
     assert config.port == Config.port
     assert config.debug is False
     assert config.lan is False
+    assert config.lan_address is None
 
 
 def test_load_config_reads_paths_and_numbers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -74,6 +76,7 @@ def test_load_config_reads_paths_and_numbers(tmp_path: Path, monkeypatch: pytest
         'SMART_LEDGER_PORT': '6123',
         'FLASK_DEBUG': 'true',
         'SMART_LEDGER_LAN': '1',
+        'SMART_LEDGER_LAN_ADDRESS': ' 192.168.1.50 ',
     }
     for name, value in values.items():
         monkeypatch.setenv(name, value)
@@ -93,6 +96,7 @@ def test_load_config_reads_paths_and_numbers(tmp_path: Path, monkeypatch: pytest
     assert config.port == 6123
     assert config.debug is True
     assert config.lan is True
+    assert config.lan_address == '192.168.1.50'
 
 
 def test_load_config_resolves_relative_excel_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
