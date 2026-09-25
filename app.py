@@ -31,7 +31,6 @@ import webbrowser
 
 from smart_ledger import create_app
 from smart_ledger.config import load_config
-from smart_ledger.services.lan_access import lan_ip
 
 
 def port_is_free(host: str, port: int) -> bool:
@@ -169,7 +168,7 @@ def main(browser_delay_seconds: float = 1.2) -> int:
 
     print(f'Smart Ledger: {url}  (終了は Ctrl+C)')
     if config.lan:
-        address = lan_ip()
+        address = app.extensions['smart_ledger'].lan.address  # TRUSTED_HOSTS と QR コードに使う起動時の値
         if address:
             print(f'スマホから: http://{address}:{port}/  (PIN は PC の「スマホで開く」画面 {url}/lan に表示)')
         else:

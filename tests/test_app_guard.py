@@ -20,9 +20,13 @@ from app import main, port_is_free, running_instance
 class FakeApp:
     """app.run の呼び出しを記録するテスト用アプリ"""
 
-    def __init__(self) -> None:
-        """記録を空で始める"""
+    def __init__(self, lan_address: str | None = None) -> None:
+        """
+        Args:
+            lan_address: LAN モードで起動時に取得した LAN の IP アドレス（app.py がコンソールに出す）
+        """
         self.runs: list[dict[str, object]] = []
+        self.extensions = {'smart_ledger': SimpleNamespace(lan=SimpleNamespace(address=lan_address))}
 
     def run(self, **kwargs: object) -> None:
         """Flask を起動せず引数だけ記録する"""
@@ -290,7 +294,7 @@ def test_main_lan_mode_binds_all_addresses_and_opens_lan_page(
         monkeypatch: 起動依存をテスト用に差し替える
         capsys: コンソール出力を確認する
     """
-    fake_app = FakeApp()
+    fake_app = FakeApp(lan_address='192.168.1.10')
     opened: list[str] = []
 
     class ImmediateTimer:
@@ -313,7 +317,6 @@ def test_main_lan_mode_binds_all_addresses_and_opens_lan_page(
     monkeypatch.setattr(sys, 'argv', ['app.py', '--open-browser', '--port', '6123'])
     monkeypatch.setattr(app_module, 'load_config', lambda: config)
     monkeypatch.setattr(app_module, 'port_is_free', lambda host, port: True)
-    monkeypatch.setattr(app_module, 'lan_ip', lambda: '192.168.1.10')
     monkeypatch.setattr(app_module.threading, 'Timer', ImmediateTimer)
     monkeypatch.setattr(app_module.webbrowser, 'open', opened.append)
     monkeypatch.setattr(app_module, 'create_app', lambda received: fake_app)

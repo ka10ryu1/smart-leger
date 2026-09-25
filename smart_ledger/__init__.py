@@ -8,15 +8,15 @@ import secrets
 from flask import Flask
 
 from .config import Config, load_config
-from .constants import LOOPBACK_HOSTS
 from .logging_setup import setup_logging
 
 
-def create_app(config: Config | None = None) -> Flask:
+def create_app(config: Config | None = None, loopback_hosts: tuple[str, ...] = ('localhost', '127.0.0.1')) -> Flask:
     """Flask アプリケーションを組み立てる
 
     Args:
         config: 設定（None なら .env / 環境変数から読み込む）
+        loopback_hosts: PC 自身を指す Host 名（TRUSTED_HOSTS の基本。LAN モードでは起動時の LAN の IP を足す）
     """
     config = config or load_config()
     setup_logging(config)
@@ -31,7 +31,7 @@ def create_app(config: Config | None = None) -> Flask:
     services = build_services(config)
     # DNS リバインディングで別サイトのページから届いたリクエストを 400 にする（LAN モードでは起動時の LAN の IP も許可する）
     app.config['TRUSTED_HOSTS'] = [
-        *LOOPBACK_HOSTS,
+        *loopback_hosts,
         *([services.lan.address] if services.lan and services.lan.address else []),
     ]
     app.extensions['smart_ledger'] = services

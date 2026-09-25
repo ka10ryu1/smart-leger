@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 def is_local_request(loopback_address: str = '127.0.0.1') -> bool:
     """PC 自身からのリクエストか（接続元がループバックのとき）
 
-    DNS リバインディングで別サイトのページから届いたリクエストは、Host が TRUSTED_HOSTS に無いため Flask が 400 にする
-    （create_app）。待ち受けは IPv4 だけなので ::1 からは届かない
+    DNS リバインディングで別サイトのページから届いたリクエストは、Host が TRUSTED_HOSTS（create_app）に無いため
+    reject_untrusted_host（common.py）が 400 にする。待ち受けは IPv4 だけなので ::1 からは届かない
 
     Args:
         loopback_address: ループバックとみなす接続元アドレス

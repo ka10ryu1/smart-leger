@@ -128,7 +128,3 @@ MONTH_PATTERN = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
 # 明細一覧の確信度の絞り込み: 半角の 0〜1 で小数 2 桁まで（フォームの step=0.01 に合わせ、全角・指数表記・3 桁以上は弾く）
 CONFIDENCE_FILTER_PATTERN = re.compile(r'^(?:[01]|0?\.[0-9]{1,2}|1\.0{1,2})$')
 YEAR_PATTERN = re.compile(r'^\d{4}$')  # \d は isdecimal と同じ Unicode Nd なので全角数字も通る（int() できる）
-
-# ---------------------------------------------------------------- LAN モード
-# PC 自身を指す Host 名（TRUSTED_HOSTS の基本。LAN モードでは起動時の LAN の IP を足す）
-LOOPBACK_HOSTS: tuple[str, ...] = ('localhost', '127.0.0.1')
