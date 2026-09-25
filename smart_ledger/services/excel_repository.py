@@ -241,7 +241,11 @@ class ExcelRepository:
 
         if self.excel_path.exists():
             self.ensure_writable(tmp_path)
-            create_generation_backup(self.excel_path, self.backup_dir, self.backup_generations)
+            try:
+                create_generation_backup(self.excel_path, self.backup_dir, self.backup_generations)
+            except OSError as exc:
+                tmp_path.unlink(missing_ok=True)
+                raise ExcelSaveError(f'Excel のバックアップに失敗しました: {exc}') from exc
 
         try:
             os.replace(tmp_path, self.excel_path)

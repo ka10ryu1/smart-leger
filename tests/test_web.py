@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 from flask.testing import FlaskClient
@@ -113,8 +114,47 @@ def test_import_commit_rejects_unknown_preview_token(client: FlaskClient) -> Non
     Args:
         client: テストクライアント
     """
+    repo = client.application.extensions['smart_ledger'].repo
+    repo.update(
+        lambda data: data.transactions.append(Transaction('tx_keep', date(2026, 8, 1), 'A', 'A', 100, 'その他'))
+    )
+    before = repo.load()
+
     body = client.post('/import/commit', data={'token': 'unknown'}, follow_redirects=True).get_data(as_text=True)
     assert 'プレビュー情報が見つかりません' in body
+    assert repo.load() == before
+
+
+def test_import_commit_can_retry_after_save_failure(
+    client: FlaskClient, fixture_csv_bytes: bytes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Excel 保存に失敗してもプレビューを残し、同じトークンで再試行できる
+
+    Args:
+        client: テストクライアント
+        fixture_csv_bytes: CP932 の fixture
+        monkeypatch: 最初の Excel 検証だけを失敗させる
+    """
+    token = upload(client, fixture_csv_bytes).split('name="token" value="')[1].split('"')[0]
+    services = client.application.extensions['smart_ledger']
+    repo = services.repo
+    original_verify = repo.verify
+
+    def fail_once(path: Path) -> None:
+        monkeypatch.setattr(repo, 'verify', original_verify)
+        raise OSError(f'verification failed: {path.name}')
+
+    monkeypatch.setattr(repo, 'verify', fail_once)
+    failed = client.post('/import/commit', data={'token': token})
+    assert failed.status_code == 500
+    assert 'Excel の保存に失敗しました' in failed.get_data(as_text=True)
+    assert repo.load().transactions == []
+    assert services.importer.load_preview(token) is not None
+
+    retry = client.post('/import/commit', data={'token': token})
+    assert retry.status_code == 302
+    assert len(repo.load().transactions) == 10
+    assert services.importer.load_preview(token) is None
 
 
 def test_excel_locked_error_renders_423(client: FlaskClient, monkeypatch: pytest.MonkeyPatch) -> None:
