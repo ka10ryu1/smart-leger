@@ -257,8 +257,10 @@ def test_always_scope_applies_to_same_merchant(client: FlaskClient, fixture_csv_
         f'/transactions/{tx_id}/allocations',
         data={'alloc_category': ['食費'], 'alloc_amount': ['abc'], 'alloc_memo': [''], 'back': '/review'},
     )
-    assert response.headers['Location'] == f'/transactions/{tx_id}/edit?back=/review'
-    assert '内訳の金額が数値ではありません' in client.get(response.headers['Location']).get_data(as_text=True)
+    assert response.status_code == 400  # リダイレクトせず、送信値を入力欄に残して編集画面を返す
+    html = response.get_data(as_text=True)
+    assert '内訳の金額が数値ではありません' in html
+    assert 'value="abc"' in html and '<a class="back" href="/review">' in html
 
 
 def test_edit_changes_kind_only_when_posted(client: FlaskClient, fixture_csv_bytes: bytes) -> None:
@@ -367,6 +369,48 @@ def test_allocation_blank_amount_gets_remainder(client: FlaskClient) -> None:
 
     body = post(['6000', '4000'])  # 空の行が無ければ従来どおり残額の文言は出さない
     assert '内訳を保存しました。' in body and 'に入れました' not in body
+
+
+def test_allocation_error_keeps_submitted_rows(client: FlaskClient) -> None:
+    """内訳の保存エラー時は送信した行を入力欄に残した編集画面を HTTP 400 で返し、保存済みの内訳は変えない
+
+    Args:
+        client: テストクライアント
+    """
+    repo = client.application.extensions['smart_ledger'].repo
+
+    def seed(data: LedgerData) -> None:
+        """内訳を保存済みの明細を置く
+
+        Args:
+            data: 全データ
+        """
+        data.transactions.append(Transaction('tx_e', date(2026, 8, 1), 'E', 'E', 10000, '食費'))
+        data.allocations.append(Allocation('tx_e', '食費', 10000, '保存済み'))
+
+    repo.update(seed)
+    response = client.post(
+        '/transactions/tx_e/allocations',
+        data={
+            'alloc_category': ['外食', '日用品・買い物', ''],
+            'alloc_amount': ['10,000', '', ''],  # 残額が 0 円になるのでエラー
+            'alloc_memo': ['ランチ', '洗剤', ''],
+            'back': '/review',
+        },
+    )
+    assert response.status_code == 400
+    html = response.get_data(as_text=True)
+    assert '残額が 0 円' in html
+    rows = re.findall(r'<div class="alloc-row">(.*?)</div>', html, re.S)
+    assert len(rows) == 2  # すべて空の行は除く
+    assert '<option value="外食" selected>' in rows[0] and 'value="10000"' in rows[0] and 'value="ランチ"' in rows[0]
+    assert '<option value="日用品・買い物" selected>' in rows[1] and 'value="洗剤"' in rows[1]
+    assert 'name="alloc_amount" class="alloc-amount" inputmode="numeric" placeholder="金額" value=""' in rows[1]
+    assert '保存済み' not in html and 'None' not in html
+    assert '<a class="back" href="/review">' in html
+    assert [(a.category, a.amount, a.memo) for a in repo.load().allocations_for('tx_e')] == [
+        ('食費', 10000, '保存済み')
+    ]
 
 
 def test_edit_copies_previous_allocations_without_saving(client: FlaskClient) -> None:

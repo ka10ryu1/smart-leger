@@ -60,7 +60,7 @@
   <form method="post" action="{{ url_for('ledger.update_allocations', tx_id=tx.id) }}" id="alloc-form" data-total="{{ tx.amount }}" data-submit-once>
     <input type="hidden" name="back" value="{{ back }}">
     <div id="alloc-rows" class="alloc-rows">
-      {% set rows = (prev.items if prev and copy_requested else allocations) or [None, None] %}
+      {% set rows = form_rows or (prev.items if prev and copy_requested else allocations) or [None, None] %}
       {% for a in rows %}
       <div class="alloc-row">
         <select name="alloc_category">

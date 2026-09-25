@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from flask import abort, flash, redirect, render_template, request
 from werkzeug.wrappers import Response as WerkzeugResponse
 
@@ -19,16 +21,21 @@ from ..services.normalize import merchant_key
 from .common import bp, edit_url, load_data, safe_back, save_and_redirect, svc
 
 
-def parse_allocation_form() -> list[AllocationInput]:
-    """内訳フォーム（alloc_category / alloc_amount / alloc_memo の並列リスト）を読む
+@dataclass
+class AllocationFormRow:
+    """内訳フォームの送信値 1 行（金額はカンマを除いた文字列のまま。保存エラー時に入力欄へ戻す）"""
 
-    Returns:
-        空行を除いた内訳入力（金額欄が空の行は amount=None。金額が数値でなければ ValueError）
-    """
+    category: str
+    amount: str
+    memo: str
+
+
+def read_allocation_form() -> list[AllocationFormRow]:
+    """内訳フォーム（alloc_category / alloc_amount / alloc_memo の並列リスト）を行ごとに読む（すべて空の行は除く）"""
     categories = request.form.getlist('alloc_category')
     amounts = request.form.getlist('alloc_amount')
     memos = request.form.getlist('alloc_memo')
-    items: list[AllocationInput] = []
+    rows: list[AllocationFormRow] = []
     for i in range(max(len(categories), len(amounts))):
         cat = categories[i].strip() if i < len(categories) else ''
         amt_raw = (amounts[i] if i < len(amounts) else '').replace(',', '').strip()
@@ -36,22 +43,38 @@ def parse_allocation_form() -> list[AllocationInput]:
         if not cat and not amt_raw and not memo:
             continue
 
-        try:
-            amt = int(amt_raw) if amt_raw else None
-        except ValueError as exc:
-            raise ValueError(f'内訳の金額が数値ではありません: {amt_raw}') from exc
+        rows.append(AllocationFormRow(category=cat, amount=amt_raw, memo=memo))
 
-        items.append(AllocationInput(category=cat, amount=amt, memo=memo))
+    return rows
+
+
+def parse_allocation_form(rows: list[AllocationFormRow]) -> list[AllocationInput]:
+    """内訳フォームの送信値を内訳入力にする
+
+    Args:
+        rows: read_allocation_form() で読んだ行
+
+    Returns:
+        内訳入力（金額欄が空の行は amount=None。金額が数値でなければ ValueError）
+    """
+    items: list[AllocationInput] = []
+    for row in rows:
+        try:
+            amt = int(row.amount) if row.amount else None
+        except ValueError as exc:
+            raise ValueError(f'内訳の金額が数値ではありません: {row.amount}') from exc
+
+        items.append(AllocationInput(category=row.category, amount=amt, memo=row.memo))
 
     return items
 
 
-@bp.route('/transactions/<tx_id>/edit')
-def edit_transaction(tx_id: str) -> str:
-    """明細編集画面（copy_allocations=1 なら内訳フォームを前回の内訳の複写で埋める。保存はしない）
+def render_edit(tx_id: str, form_rows: list[AllocationFormRow] | None = None) -> str:
+    """明細編集画面を描画する
 
     Args:
         tx_id: 明細 ID
+        form_rows: 内訳の入力欄に戻す送信値（保存エラー時。None なら保存済みの内訳か前回の内訳の複写を出す）
     """
     data = load_data()
     tx = data.find_transaction(tx_id)
@@ -64,6 +87,7 @@ def edit_transaction(tx_id: str) -> str:
         'edit.html',
         tx=tx,
         allocations=data.allocations_for(tx_id),
+        form_rows=form_rows,
         prev=copy_previous_allocations(data, tx),
         copy_requested=request.args.get('copy_allocations') == '1',
         categories=data.category_names(),
@@ -71,6 +95,16 @@ def edit_transaction(tx_id: str) -> str:
         same_merchant_count=len(same_merchant),
         back=safe_back(),
     )
+
+
+@bp.route('/transactions/<tx_id>/edit')
+def edit_transaction(tx_id: str) -> str:
+    """明細編集画面（copy_allocations=1 なら内訳フォームを前回の内訳の複写で埋める。保存はしない）
+
+    Args:
+        tx_id: 明細 ID
+    """
+    return render_edit(tx_id)
 
 
 @bp.route('/transactions/<tx_id>/rule-preview')
@@ -141,19 +175,22 @@ def update_category(tx_id: str) -> WerkzeugResponse:
 
 
 @bp.route('/transactions/<tx_id>/allocations', methods=['POST'])
-def update_allocations(tx_id: str) -> WerkzeugResponse:
-    """内訳を保存する（合計が明細金額と一致しなければエラー表示。金額欄が空の 1 行には残額を入れて文言で知らせる）
+def update_allocations(tx_id: str) -> WerkzeugResponse | tuple[str, int]:
+    """内訳を保存する（金額欄が空の 1 行には残額を入れて文言で知らせる）
+
+    合計が明細金額と一致しないなどのエラーはリダイレクトせず、送信された行を入力欄に残した編集画面を HTTP 400 で返す
 
     Args:
         tx_id: 明細 ID
     """
+    rows = read_allocation_form()
 
     def mutate(data: LedgerData) -> ValidatedAllocations:
         tx = data.find_transaction(tx_id)
         if tx is None:
             abort(404)
 
-        items = parse_allocation_form()  # 金額が数値でなければ ValueError（保存前に止まる）
+        items = parse_allocation_form(rows)  # 金額が数値でなければ ValueError（保存前に止まる）
         validated = validate_allocations(tx, items, data.category_names())
         replace_allocations(data, tx_id, validated.allocations)
         return validated
@@ -168,7 +205,14 @@ def update_allocations(tx_id: str) -> WerkzeugResponse:
         remainder = validated.remainder
         return f'内訳を保存しました。残額 {remainder.amount:,} 円を「{remainder.category}」に入れました。'
 
-    return save_and_redirect(mutate, message, edit_url(tx_id))
+    try:
+        validated = svc().repo.update(mutate)
+    except ValueError as exc:  # AllocationError / 金額が数値でない（打ち直さずに直せるよう入力を残す）
+        flash(str(exc), 'error')
+        return render_edit(tx_id, rows), 400
+
+    flash(message(validated), 'success')
+    return redirect(edit_url(tx_id))
 
 
 @bp.route('/transactions/<tx_id>/allocations/clear', methods=['POST'])
